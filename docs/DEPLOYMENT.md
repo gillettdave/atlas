@@ -1,5 +1,15 @@
 # Atlas — Server Deployment Guide
 
+## Build Profiles
+
+| Profile | What it does | API points at |
+|---|---|---|
+| `development` | Dev client build for local testing | localhost:8000 |
+| `preview` | Internal distribution build (your phone, no app store) | your server's local IP |
+| `production` | App Store / Play Store build | your server's public domain |
+
+---
+
 ## Overview
 
 - **Dev machine (Windows):** always on `dev` branch, push changes to GitHub
@@ -95,6 +105,67 @@ docker compose exec api python scripts/discover_ats_boards.py --max-searches 40
 
 # Check container status
 docker compose ps
+```
+
+---
+
+## EAS — Building the Mobile App
+
+EAS (Expo Application Services) compiles the native app in the cloud so you
+don't need Xcode or Android Studio locally.
+
+### One-time setup (do this once)
+
+```powershell
+# Install EAS CLI globally
+npm install -g eas-cli
+
+# Log in with your Expo account
+eas login
+
+# From the mobile directory — links this project to your Expo account
+# and fills in the projectId in app.json automatically
+cd mobile
+eas init
+```
+
+After `eas init`, commit the updated `app.json` (it will have a real `projectId`).
+
+### Build for your phone (no app store needed)
+
+The `preview` profile builds a real native app and lets you install it
+directly on your phone via a QR code. Update the server IP in `eas.json`
+first, then:
+
+```powershell
+cd mobile
+
+# iOS (generates a .ipa you install via link)
+eas build --profile preview --platform ios
+
+# Android (generates an .apk you install directly)
+eas build --profile preview --platform android
+```
+
+EAS emails you when the build is done (usually 5–15 min). You get a link
+to install it on your phone — no app store involved.
+
+### When you update the app
+
+Rebuild with the same command. For small JS-only changes you can use
+EAS Update (faster — pushes a JS bundle without a full rebuild):
+
+```powershell
+eas update --branch preview --message "what changed"
+```
+
+### App Store / Play Store (later)
+
+```powershell
+eas build --profile production --platform ios
+eas build --profile production --platform android
+eas submit --platform ios      # submits to App Store Connect
+eas submit --platform android  # submits to Google Play
 ```
 
 ---

@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "owner": "gillettdave",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.atlas.mobile"
@@ -26,6 +27,11 @@
     "experiments": {
       "typedRoutes": true
     },
-    "scheme": "atlas"
+    "scheme": "atlas",
+    "extra": {
+      "eas": {
+        "projectId": "FILL_IN_AFTER_EAS_INIT"
+      }
+    }
   }
 }
