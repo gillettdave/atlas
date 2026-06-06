@@ -1,0 +1,180 @@
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# =============================================================================
+# Environment / Secrets — NEVER commit these
+# =============================================================================
+.env
+.env.local
+.env.production
+.env.*.local
+*.env
+
+# =============================================================================
+# Node / React Native / Expo
+# =============================================================================
+node_modules/
+.expo/
+dist/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.pnp/
+.pnp.js
+
+# =============================================================================
+# Database
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+
+# =============================================================================
+# Legacy test/run output directories (old pipeline runs, not source code)
+# =============================================================================
+jobs_collection/
+jobs_collection_test/
+jobs_collection_v2/
+jobs_collection_v3/
+jobs_collection_v4/
+jobs_resolver_test/
+jobs_resolver_test_50/
+jobs_resolver_v2_test/
+jobs_resolver_v2_test_50/
+jobs_resolver_v2_full/
+browser_resolved_test/
+browser_resolved_test_50/
+browser_resolved_test_50_visible/
+profile_site_test/
+profile_site_v2_test/
+profile_site_v2_test_50/
+profile_site_v2_full/
+resolved_targets_test/
+resolved_targets_test_v2/
+resolved_search_test/
+resolved_search_test_v2/
+resolved_web3_test/
+seed_lite/
+web3_seed/
+ats_pipeline/runs/
+
+# =============================================================================
+# Logs & temp files
+# =============================================================================
+*.log
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
+
+# =============================================================================
+# IDE
+# =============================================================================
+.vscode/
+.idea/
+*.code-workspace
+
+# =============================================================================
+# Claude Code local session data
+# =============================================================================
+.claude/
+
+# =============================================================================
+# Playwright / test artifacts
+# =============================================================================
+playwright-report/
+test-results/
+
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+desktop.ini
+
+# =============================================================================
+# Legacy root-level scripts and docs (pre-Atlas pipeline work)
+# =============================================================================
+ats_cli.py
+ats_cli_updated.py
+ats_cli_v2.py
+jobs_collector_v1.py
+jobs_collector_v2.py
+jobs_collector_v3.py
+jobs_collector_v4.py
+build_web3_company_seed_db.py
+build_web3_company_seed_db_v2.py
+build_web3_company_seed_db_v3.py
+official_site_jobs_resolver_v1.py
+official_site_jobs_resolver_v2.py
+profile_site_resolver_browser_v1.py
+profile_site_resolver_browser_v2.py
+seed_resolver_browser_v1.py
+seed_resolver_browser_v2.py
+seed_resolver_search_v1.py
+seed_resolver_search_v2.py
+seed_resolver_v1.py
+seed_resolver_v2.py
+seed_resolver_web3_sources_v1.py
+README_ats_cli.md
+README_ats_cli_v2.md
+README_build_web3_company_seed_db.md
+README_build_web3_company_seed_db_v2.md
+README_build_web3_company_seed_db_v3.md
+README_jobs_collector_v1.md
+README_jobs_collector_v2.md
+README_jobs_collector_v3.md
+README_jobs_collector_v4.md
+README_official_site_jobs_resolver_v1.md
+README_official_site_jobs_resolver_v2.md
+README_profile_site_resolver_browser_v1.md
+README_profile_site_resolver_browser_v2.md
+README_seed_resolver_browser_v1.md
+README_seed_resolver_browser_v2.md
+README_seed_resolver_search_v1.md
+README_seed_resolver_search_v2.md
+README_seed_resolver_v1.md
+README_seed_resolver_v2.md
+README_seed_resolver_web3_sources_v1.md
+README_ats_cli.md
+Handover AI Job Application Engine.txt
+Project_Atlas_Founder_Handover.md
+Project_Atlas_Unified_Master_Architecture.md
+QUICKSTART.txt
+Start procedure.txt
+Startup Proceedure.txt
+company_urls.txt
+company_urls_from_job_sites.txt
+digest.csv
+requirements.txt
+requirements1.txt
+package-lock.json
+ats_pipeline/
+Jobr/
+frontend/
+venv/

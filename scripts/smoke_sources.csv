@@ -1,0 +1,4 @@
+company_name,source,profile_url,official_site,jobs_page,ats_type,ats_board_url,ats_slug,cryptojobslist_fallback_jobs_page,resolution_type,notes
+Anchorage Digital,manual,,https://anchorage.com,,lever,https://jobs.lever.co/anchorage,anchorage,,ats_lever,smoke_test
+Immunefi,manual,,https://immunefi.com,,greenhouse,https://boards.greenhouse.io/immunefi,immunefi,,ats_greenhouse,smoke_test
+BitMEX,manual,,https://bitmex.com,,greenhouse,https://job-boards.greenhouse.io/bitmex,bitmex,,ats_greenhouse,smoke_test

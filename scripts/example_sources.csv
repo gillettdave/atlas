@@ -1,0 +1,8 @@
+company_name,source,profile_url,official_site,jobs_page,ats_type,ats_board_url,ats_slug,cryptojobslist_fallback_jobs_page,resolution_type,notes
+Anchorage Digital,manual,,https://anchorage.com,,lever,https://jobs.lever.co/anchorage,anchorage,,ats_lever,verified_from_v4
+Immunefi,manual,,https://immunefi.com,,greenhouse,https://boards.greenhouse.io/immunefi,immunefi,,ats_greenhouse,verified_from_v4
+BitMEX,manual,,https://bitmex.com,,greenhouse,https://job-boards.greenhouse.io/bitmex,bitmex,,ats_greenhouse,verified_from_v4
+AshbyHQ,manual,,,,ashby,https://jobs.ashbyhq.com/Ashby,,,m2_ashby_posting_api_demo,
+Jobstash aggregator,aggregator,,,,jobstash,https://jobstash.xyz,,,,m3_example,
+Ergonia (Workable widget),manual,,,,workable,https://apply.workable.com/ergonia,ergonia,,,m4_example,
+Polestar (Teamtailor RSS),manual,,,,teamtailor,https://polestar.teamtailor.com/jobs,,,,m4_example_rss,
