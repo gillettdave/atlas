@@ -1,0 +1,40 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: ${ATLAS_DB_PASSWORD}
+      POSTGRES_DB: atlas
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override DB URL to point at the db container (not localhost)
+      ATLAS_DATABASE_URL: postgresql+psycopg://atlas:${ATLAS_DB_PASSWORD}@db:5432/atlas
+      ATLAS_ENV: production
+      ATLAS_API_HOST: "0.0.0.0"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Persist any local file state (e.g. discover checkpoint)
+      - ./backend/scripts:/app/scripts
+
+volumes:
+  postgres_data:
