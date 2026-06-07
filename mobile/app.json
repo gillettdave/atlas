@@ -29,8 +29,9 @@
     },
     "scheme": "atlas",
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "FILL_IN_AFTER_EAS_INIT"
+        "projectId": "de807da8-864a-4864-b389-88496455179e"
       }
     }
   }
