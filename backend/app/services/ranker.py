@@ -43,13 +43,17 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..constants import SEEDED_LOCAL_USER_ID
+from ..models.candidate_profile import CandidateProfile
 from ..models.job import Job
 from ..models.job_score import JobScore
 from ..models.job_source_sighting import JobSourceSighting
 from ..models.pipeline_event import PipelineEvent
+from ..models.user_job_score import UserJobScore
 from ..models.user_profile import UserProfile
 
 from . import ranker_text as ranker_text_svc
@@ -135,6 +139,7 @@ DEFAULT_COMPONENT_WEIGHTS: dict[str, float] = {
     "duplicate_confidence": 1.0,
     "description_fit": 1.0,
     "hidden_gem_bonus": 1.0,
+    "location_fit": 1.5,
 }
 
 # Max raw points per component BEFORE weighting. Must stay in sync with
@@ -148,6 +153,7 @@ COMPONENT_MAX: dict[str, float] = {
     "duplicate_confidence": 10.0,
     "description_fit": 12.0,
     "hidden_gem_bonus": 10.0,
+    "location_fit": 15.0,
 }
 
 # Base (non-gem) max used for normalization. Gem bonus is additive on top
@@ -160,6 +166,7 @@ _BASE_COMPONENTS: tuple[str, ...] = (
     "remote_fit",
     "duplicate_confidence",
     "description_fit",
+    "location_fit",
 )
 
 
@@ -188,6 +195,11 @@ class ProfileRuntime:
     description_ref_vector: dict[str, float] = field(default_factory=dict)
     note_suggested_terms: frozenset[str] = field(default_factory=frozenset)
 
+    # Location fit (Phase 1) — loaded from candidate_profiles at rescore time.
+    location_search_mode: str = "remote"   # "remote"|"local"|"both"|"target"|"all"
+    location_home_city: str = ""
+    location_target_cities: list[str] = field(default_factory=list)
+
 
 def _split_keywords(kws: list[str]) -> tuple[set[str], set[str]]:
     """Partition a flat keyword list into (single-word, multi-word) sets."""
@@ -208,11 +220,25 @@ def _split_keywords(kws: list[str]) -> tuple[set[str], set[str]]:
     return words, phrases
 
 
-def build_runtime(profile: Optional[UserProfile]) -> ProfileRuntime:
+def build_runtime(
+    profile: Optional[UserProfile],
+    *,
+    location_ctx: Optional[dict] = None,
+) -> ProfileRuntime:
     """Compile a profile into a ProfileRuntime.
 
     When `profile` is None, returns a runtime that matches v1 semantics
-    exactly (all weights 1.0, no extras, no negatives)."""
+    exactly (all weights 1.0, no extras, no negatives).
+
+    `location_ctx` is an optional dict with keys `search_mode`, `home_city`,
+    `target_cities` — loaded from candidate_profiles by callers that have a
+    DB session. When absent, defaults to remote-mode (safe, backward-compat).
+    """
+    loc = location_ctx or {}
+    loc_mode = str(loc.get("search_mode") or "remote")
+    loc_city = str(loc.get("home_city") or "")
+    loc_targets = list(loc.get("target_cities") or [])
+
     if profile is None:
         return ProfileRuntime(
             slug="default",
@@ -231,6 +257,9 @@ def build_runtime(profile: Optional[UserProfile]) -> ProfileRuntime:
             is_default=True,
             description_ref_vector={},
             note_suggested_terms=frozenset(),
+            location_search_mode=loc_mode,
+            location_home_city=loc_city,
+            location_target_cities=loc_targets,
         )
 
     weights = dict(DEFAULT_COMPONENT_WEIGHTS)
@@ -287,6 +316,9 @@ def build_runtime(profile: Optional[UserProfile]) -> ProfileRuntime:
         is_default=bool(profile.is_default),
         description_ref_vector=ref_vec,
         note_suggested_terms=note_sug,
+        location_search_mode=loc_mode,
+        location_home_city=loc_city,
+        location_target_cities=loc_targets,
     )
 
 # Title-quality positives.
@@ -587,6 +619,73 @@ def _score_description_fit(job: Job, rt: ProfileRuntime) -> tuple[float, list[st
     return total, notes
 
 
+def _score_location_fit(job: Job, rt: ProfileRuntime) -> tuple[float, list[str]]:
+    """0..15. Geographic relevance of the job to the user's location preferences.
+
+    For the default search_mode of "remote", remote-tagged jobs score maximum
+    and all others score near-neutral — this preserves existing ranking behaviour
+    while slightly rewarding explicitly-remote listings.
+
+    City matching is simple substring: "Halifax" matches "Halifax, NS, Canada".
+    Geocoding / distance math is deferred to Phase 1 stretch / Phase 3.
+    """
+    search_mode = rt.location_search_mode
+    home_city = rt.location_home_city.strip().lower() if rt.location_home_city else ""
+    target_cities = [c.strip().lower() for c in rt.location_target_cities if c.strip()]
+
+    job_loc = (job.location or "").strip().lower()
+    remote_type = (job.remote_type or "").strip().lower()
+    is_remote = remote_type == "remote" or (not remote_type and "remote" in job_loc)
+
+    def _city_match(city: str) -> bool:
+        if not city or not job_loc:
+            return False
+        return any(seg.strip() in job_loc for seg in city.split(",") if seg.strip())
+
+    if search_mode == "remote":
+        if is_remote:
+            return 15.0, ["remote job (remote mode)"]
+        if not job_loc:
+            return 8.0, ["location unknown"]
+        return 5.0, ["non-remote in remote mode"]
+
+    if search_mode == "local":
+        if not home_city:
+            return 8.0, ["no home city set"]
+        if is_remote:
+            return 3.0, ["remote job (local mode)"]
+        if _city_match(home_city):
+            return 15.0, [f"near {rt.location_home_city}"]
+        if any(_city_match(t) for t in target_cities):
+            return 12.0, ["target city match"]
+        if not job_loc:
+            return 8.0, ["location unknown"]
+        return 2.0, ["outside search area"]
+
+    if search_mode == "both":
+        if is_remote:
+            return 15.0, ["remote job (both mode)"]
+        if home_city and _city_match(home_city):
+            return 15.0, [f"near {rt.location_home_city}"]
+        if any(_city_match(t) for t in target_cities):
+            return 12.0, ["target city match"]
+        if not job_loc:
+            return 8.0, ["location unknown"]
+        return 4.0, ["neither remote nor local"]
+
+    if search_mode == "target":
+        if not target_cities:
+            return 8.0, ["no target cities set"]
+        if any(_city_match(t) for t in target_cities):
+            return 15.0, ["target city match"]
+        if not job_loc:
+            return 8.0, ["location unknown"]
+        return 2.0, ["not in target cities"]
+
+    # "all" mode — neutral, no boost or penalty
+    return 8.0, ["all locations"]
+
+
 def _detect_hidden_gem(
     *,
     job: Job,
@@ -664,6 +763,7 @@ def score_job(
     remote_q, remote_notes = _score_remote_fit(job, rt)
     dup_q, dup_notes = _score_duplicate_confidence(sighting_count)
     desc_fit, desc_notes = _score_description_fit(job, rt)
+    loc_fit, loc_notes = _score_location_fit(job, rt)
 
     # quality_score is profile-independent: "is this listing well-formed
     # and trustworthy?" Composed of title_quality (15) + provider_trust
@@ -691,6 +791,7 @@ def score_job(
         "remote_fit": remote_q,
         "duplicate_confidence": dup_q,
         "description_fit": desc_fit,
+        "location_fit": loc_fit,
         "hidden_gem_bonus": gem_bonus,
     }
     weights = rt.weights
@@ -761,8 +862,8 @@ def score_job(
 
     notes_all = (
         web3_notes + title_notes + prov_notes + fresh_notes
-        + remote_notes + dup_notes + desc_notes + gem_notes + negative_notes
-        + synergy_notes
+        + remote_notes + dup_notes + desc_notes + loc_notes + gem_notes
+        + negative_notes + synergy_notes
     )
     rationale = " | ".join([n for n in notes_all if n])[:480]
 
@@ -774,6 +875,7 @@ def score_job(
         "remote_fit": round(remote_q, 2),
         "duplicate_confidence": round(dup_q, 2),
         "description_fit": round(desc_fit, 2),
+        "location_fit": round(loc_fit, 2),
         "hidden_gem_bonus": round(gem_bonus, 2),
         "weighted_raw": round(weighted_raw + weighted_gem, 2),
         "weighted_base": round(weighted_base, 2),
@@ -801,6 +903,21 @@ def score_job(
 # ---------------------------------------------------------------------------
 # DB driver
 # ---------------------------------------------------------------------------
+
+def _load_location_ctx(db: Session) -> dict:
+    """Load location preferences from candidate_profiles for build_runtime."""
+    try:
+        row = db.query(CandidateProfile).first()
+        if row:
+            return {
+                "search_mode": row.search_mode or "remote",
+                "home_city": row.home_city or "",
+                "target_cities": list(row.target_cities or []),
+            }
+    except Exception:
+        pass
+    return {"search_mode": "remote", "home_city": "", "target_cities": []}
+
 
 @dataclass
 class RankerStats:
@@ -844,6 +961,48 @@ def _gather_sighting_stats(
     }
 
 
+def _upsert_user_job_score(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    result: "ScoreResult",
+    profile_slug: Optional[str],
+) -> None:
+    """INSERT ... ON CONFLICT DO UPDATE for user_job_scores.
+
+    Keeps exactly one current row per (user_id, job_id); audit history
+    lives in job_scores which is append-only.
+    """
+    import uuid as _uuid
+    stmt = (
+        pg_insert(UserJobScore)
+        .values(
+            id=_uuid.uuid4(),
+            user_id=user_id,
+            job_id=job_id,
+            score=float(result.ranking_score),
+            scored_at=datetime.now(timezone.utc),
+            profile_slug=profile_slug,
+            hidden_gem=result.hidden_gem,
+            bucket=result.bucket,
+            rationale=result.rationale,
+        )
+        .on_conflict_do_update(
+            constraint="uq_user_job_scores_user_job",
+            set_={
+                "score": float(result.ranking_score),
+                "scored_at": datetime.now(timezone.utc),
+                "profile_slug": profile_slug,
+                "hidden_gem": result.hidden_gem,
+                "bucket": result.bucket,
+                "rationale": result.rationale,
+            },
+        )
+    )
+    db.execute(stmt)
+
+
 def rescore_jobs(
     db: Session,
     *,
@@ -853,6 +1012,7 @@ def rescore_jobs(
     limit: Optional[int] = None,
     now: Optional[datetime] = None,
     profile: Optional[UserProfile] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> RankerStats:
     """Score (or re-score) a batch of canonical jobs.
 
@@ -872,10 +1032,11 @@ def rescore_jobs(
     Commits once at the end.
     """
     stats = RankerStats()
-    runtime = build_runtime(profile)
+    runtime = build_runtime(profile, location_ctx=_load_location_ctx(db))
     # Only the default profile (or unspecified) overwrites the summary
     # columns on Job; other profiles only add job_scores rows.
     write_job_columns = profile is None or bool(getattr(profile, "is_default", False))
+    effective_user_id = user_id or SEEDED_LOCAL_USER_ID
 
     stmt = select(Job)
     if provider:
@@ -937,6 +1098,15 @@ def rescore_jobs(
             )
         )
 
+        # Upsert into user_job_scores — one current row per (user, job).
+        _upsert_user_job_score(
+            db,
+            user_id=effective_user_id,
+            job_id=job.id,
+            result=result,
+            profile_slug=runtime.slug,
+        )
+
         stats.scored += 1
         stats.bump(result.bucket)
         if result.hidden_gem:
@@ -952,6 +1122,7 @@ def rescore_one(
     *,
     now: Optional[datetime] = None,
     profile: Optional[UserProfile] = None,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[ScoreResult]:
     """Rescore a single job by id. Returns None if the job is missing."""
     job = db.get(Job, job_id)
@@ -970,7 +1141,7 @@ def rescore_one(
     ).all()
     domains = [r[0] for r in dom_rows]
 
-    runtime = build_runtime(profile)
+    runtime = build_runtime(profile, location_ctx=_load_location_ctx(db))
     result = score_job(
         job,
         sighting_count=count,
@@ -994,6 +1165,13 @@ def rescore_one(
             freshness_score=result.freshness_score,
             fit_score=result.fit_score,
         )
+    )
+    _upsert_user_job_score(
+        db,
+        user_id=user_id or SEEDED_LOCAL_USER_ID,
+        job_id=job.id,
+        result=result,
+        profile_slug=runtime.slug,
     )
     db.commit()
     return result
@@ -1025,7 +1203,7 @@ def score_job_dry(
     ).all()
     domains = [r[0] for r in dom_rows]
 
-    runtime = build_runtime(profile)
+    runtime = build_runtime(profile, location_ctx=_load_location_ctx(db))
     return score_job(
         job,
         sighting_count=count,

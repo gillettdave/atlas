@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "owner": "gillettdave",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.atlas.mobile"
@@ -26,6 +27,12 @@
     "experiments": {
       "typedRoutes": true
     },
-    "scheme": "atlas"
+    "scheme": "atlas",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "de807da8-864a-4864-b389-88496455179e"
+      }
+    }
   }
 }

@@ -21,7 +21,8 @@ import { JobCard } from '../../components/JobCard'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { useConfigStore } from '../../stores/config'
-import type { DigestLaneItem, DigestGenerateRequest, DigestType, Job, Profile } from '../../types'
+import type { FeedLocationMode } from '../../stores/config'
+import type { DigestLaneItem, DigestGenerateRequest, DigestType, Job, Profile, CandidateProfile } from '../../types'
 
 type FeedMode = 'digest' | 'browse'
 type IntakeMode = 'url' | 'text'
@@ -381,9 +382,25 @@ function IntakeModal({ visible, onClose }: { visible: boolean; onClose: () => vo
   )
 }
 
+// ── Location filter ───────────────────────────────────────────────────────────
+
+function locationMatchesMode(job: Job, mode: FeedLocationMode, homeCity: string): boolean {
+  if (mode === 'all') return true
+  const loc = (job.location || '').toLowerCase()
+  const rt  = job.remote_type || ''
+  const isRemote = rt === 'remote' || (!rt && loc.includes('remote')) || !job.location
+  if (mode === 'remote') return isRemote
+  if (mode === 'local') {
+    if (!homeCity) return true
+    const city = homeCity.split(',')[0].trim().toLowerCase()
+    return city ? loc.includes(city) : true
+  }
+  return true
+}
+
 // ── Digest Mode ───────────────────────────────────────────────────────────────
 
-function DigestView() {
+function DigestView({ locationMode, homeCity }: { locationMode: FeedLocationMode; homeCity: string }) {
   const queryClient = useQueryClient()
   const [showOptions, setShowOptions] = useState(false)
 
@@ -427,8 +444,10 @@ function DigestView() {
     return <ErrorState message={msg} onRetry={refetchDigests} />
   }
 
-  const freshItems  = digest?.fresh       ?? []
-  const gemItems    = digest?.hidden_gems ?? []
+  const allFreshItems = digest?.fresh       ?? []
+  const allGemItems   = digest?.hidden_gems ?? []
+  const freshItems  = allFreshItems.filter((i) => locationMatchesMode(i.job, locationMode, homeCity))
+  const gemItems    = allGemItems.filter((i)   => locationMatchesMode(i.job, locationMode, homeCity))
   const totalItems  = freshItems.length + gemItems.length
 
   type Section = { title: string; icon: string; data: DigestLaneItem[] }
@@ -444,10 +463,20 @@ function DigestView() {
     )
   }
 
+  const locationLabel =
+    locationMode === 'remote' ? '🌍 Remote only' :
+    locationMode === 'local'  ? `📍 Near ${homeCity || 'your city'}` :
+    null
+
   const ListHeader = (
     <View className="flex-row items-center justify-between mb-4">
       <View>
-        <Text className="text-gray-400 text-xs">Latest digest</Text>
+        <View className="flex-row items-center gap-2">
+          <Text className="text-gray-400 text-xs">Latest digest</Text>
+          {locationLabel && (
+            <Text className="text-indigo-400 text-xs">{locationLabel}</Text>
+          )}
+        </View>
         {digest && (
           <Text className="text-gray-600 text-xs mt-0.5">
             {totalItems} jobs · {new Date(digest.generated_at).toLocaleDateString()}
@@ -611,7 +640,7 @@ function FilterPillRow<T extends string>({ options, value, onChange }: FilterPil
   )
 }
 
-function BrowseView() {
+function BrowseView({ locationMode }: { locationMode: FeedLocationMode; homeCity: string }) {
   const queryClient = useQueryClient()
   const activeProfileSlug = useConfigStore((s) => s.activeProfileSlug)
 
@@ -623,8 +652,15 @@ function BrowseView() {
   // filters
   const [age,    setAge]    = useState<AgeFilter>('any')
   const [score,  setScore]  = useState<ScoreFilter>('any')
-  const [remote, setRemote] = useState<RemoteFilter>('any')
+  const [remote, setRemote] = useState<RemoteFilter>(locationMode === 'remote' ? 'remote' : 'any')
   const [sort,   setSort]   = useState<SortFilter>('last_seen')
+
+  // Sync remote filter pill when feed location mode changes
+  useEffect(() => {
+    setRemote(locationMode === 'remote' ? 'remote' : 'any')
+    setOffset(0)
+    setAllJobs([])
+  }, [locationMode])
 
   // pagination
   const [offset, setOffset] = useState(0)
@@ -838,10 +874,25 @@ function OnboardingChecklist() {
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
 
+const LOCATION_MODES: { value: FeedLocationMode; label: string }[] = [
+  { value: 'remote', label: '🌍 Remote' },
+  { value: 'local',  label: '📍 Local'  },
+  { value: 'all',    label: '🗺️ All'   },
+]
+
 export default function FeedScreen() {
   const [mode, setMode] = useState<FeedMode>('digest')
   const [showIntake, setShowIntake] = useState(false)
   const queryClient = useQueryClient()
+
+  const { feedLocationMode, setFeedLocationMode } = useConfigStore()
+
+  const { data: candidateProfile } = useQuery<CandidateProfile | null>({
+    queryKey: ['candidate-profile'],
+    queryFn: () => api.getCandidateProfile(),
+    staleTime: 60_000,
+  })
+  const homeCity = candidateProfile?.home_city ?? ''
 
   const [cancelling, setCancelling] = useState(false)
 
@@ -933,8 +984,36 @@ export default function FeedScreen() {
         </Pressable>
       </View>
 
+      {/* Location mode toggle */}
+      <View className="flex-row px-4 pt-2 pb-1 gap-2">
+        {LOCATION_MODES.map((lm) => {
+          const active = feedLocationMode === lm.value
+          const disabled = lm.value === 'local' && !homeCity
+          return (
+            <Pressable
+              key={lm.value}
+              onPress={() => !disabled && setFeedLocationMode(lm.value)}
+              className={`flex-1 py-1 rounded-lg border items-center active:opacity-75 ${
+                active
+                  ? 'bg-indigo-700 border-indigo-600'
+                  : disabled
+                  ? 'bg-gray-900 border-gray-800 opacity-40'
+                  : 'bg-gray-900 border-gray-800'
+              }`}
+            >
+              <Text className={`text-xs font-medium ${active ? 'text-white' : 'text-gray-400'}`} numberOfLines={1}>
+                {lm.label}
+              </Text>
+            </Pressable>
+          )
+        })}
+      </View>
+
       <OnboardingChecklist />
-      {mode === 'digest' ? <DigestView /> : <BrowseView />}
+      {mode === 'digest'
+        ? <DigestView locationMode={feedLocationMode} homeCity={homeCity} />
+        : <BrowseView locationMode={feedLocationMode} homeCity={homeCity} />
+      }
 
       <IntakeModal visible={showIntake} onClose={() => setShowIntake(false)} />
     </View>

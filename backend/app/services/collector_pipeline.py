@@ -26,10 +26,91 @@ import httpx
 from ..collectors.base import RawCollectedRecord, SourceRow
 from ..collectors.web3_ats import collect_all, load_sources
 from ..config import Settings, get_settings
+from ..db import SessionLocal
+from ..models.candidate_profile import CandidateProfile
 
 logger = logging.getLogger("atlas.collector_pipeline")
 
 T = TypeVar("T")
+
+# ---------------------------------------------------------------------------
+# Location context — loaded from candidate_profiles at pipeline start
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LocationContext:
+    search_mode: str = "remote"       # "remote"|"local"|"both"|"target"|"all"
+    home_city: str = ""
+    search_radius_km: int = 50
+    target_cities: list[str] = field(default_factory=list)
+
+    @property
+    def is_location_aware(self) -> bool:
+        return self.search_mode in ("local", "both", "target")
+
+
+def _load_location_context() -> LocationContext:
+    """Load search location preferences from the candidate profile.
+
+    Returns default (remote-only) context on any error so the pipeline
+    always degrades gracefully if the DB is unavailable or pre-migration.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(CandidateProfile).first()
+            if row is None:
+                return LocationContext()
+            return LocationContext(
+                search_mode=row.search_mode or "remote",
+                home_city=row.home_city or "",
+                search_radius_km=row.search_radius_km or 50,
+                target_cities=list(row.target_cities or []),
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("location_context: DB unavailable, using remote-only default")
+        return LocationContext()
+
+
+# ATS board providers whose records should be location-filtered in local/target modes.
+_ATS_BOARD_PROVIDERS = frozenset({
+    "greenhouse", "lever", "ashby", "smartrecruiters",
+    "workable", "teamtailor", "kula", "native_jobs_page",
+})
+
+
+def _ats_location_matches(location: str, ctx: LocationContext) -> bool:
+    """Return True if an ATS board record should be kept given the location context.
+
+    Only called when ctx.search_mode is "local" or "target". For all other
+    modes every ATS record passes through unchanged.
+
+    No-location jobs are always kept — they may be remote-friendly roles that
+    simply omit the field.
+    """
+    if not location:
+        return True  # unknown location → keep
+
+    loc = location.lower()
+
+    if ctx.search_mode == "local" or ctx.search_mode == "both":
+        if "remote" in loc:
+            return ctx.search_mode == "both"
+        if not ctx.home_city:
+            return True  # no home city configured — don't filter
+        city_lower = ctx.home_city.lower()
+        # Match if any comma-separated segment of home_city appears in the location
+        return any(seg.strip() in loc for seg in city_lower.split(",") if seg.strip())
+
+    if ctx.search_mode == "target":
+        if "remote" in loc:
+            return False  # target mode = specific cities only
+        return any(t.lower() in loc for t in ctx.target_cities if t)
+
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Pipeline cancel flag — thread-safe, set by POST /pipeline/cancel
@@ -332,14 +413,33 @@ def _resolve_csv_path(raw: str, s: Settings) -> Optional[Path]:
     return None
 
 
-def _universal_aggregator_sources(s: Settings | None = None) -> list[SourceRow]:
+def _universal_aggregator_sources(
+    s: Settings | None = None,
+    location_ctx: LocationContext | None = None,
+) -> list[SourceRow]:
     """Return SourceRow entries for always-on sources.
 
     Order: RemoteOK → We Work Remotely → Arbeitnow → per-company ATS CSV (if configured).
     All are prepended to whatever per-company sources the caller provides.
+
+    When location_ctx is provided and search_mode includes local results,
+    JSearch and Adzuna rows are given location_hint/radius_km so they search
+    near the user's home city instead of remote-only.
     """
     if s is None:
         s = get_settings()
+    if location_ctx is None:
+        location_ctx = LocationContext()
+
+    # Determine whether to pass location to query-based collectors.
+    # "local" → only local; "both" → local + remote (pass location, collector handles it)
+    use_location = (
+        location_ctx.search_mode in ("local", "both")
+        and bool(location_ctx.home_city)
+    )
+    loc_hint = location_ctx.home_city if use_location else ""
+    loc_radius = location_ctx.search_radius_km if use_location else 0
+
     rows: list[SourceRow] = []
 
     if s.remoteok_enabled:
@@ -374,6 +474,8 @@ def _universal_aggregator_sources(s: Settings | None = None) -> list[SourceRow]:
                 company_name="JSearch",
                 ats_type="jsearch",
                 ats_board_url="https://jsearch.p.rapidapi.com/search",
+                location_hint=loc_hint,
+                radius_km=loc_radius,
             )
         )
     if getattr(s, "adzuna_enabled", False) and getattr(s, "adzuna_app_id", None) and getattr(s, "adzuna_app_key", None):
@@ -382,6 +484,8 @@ def _universal_aggregator_sources(s: Settings | None = None) -> list[SourceRow]:
                 company_name="Adzuna",
                 ats_type="adzuna",
                 ats_board_url="https://api.adzuna.com",
+                location_hint=loc_hint,
+                radius_km=loc_radius,
             )
         )
     if getattr(s, "themuse_enabled", True):
@@ -491,9 +595,18 @@ async def run_collector_pipeline_async(
             return result
         loaded = []
 
+    # Load location preferences from candidate profile (safe — returns default on error).
+    loc_ctx = _load_location_context()
+    if loc_ctx.is_location_aware:
+        logger.info(
+            "[pipeline] location mode=%s home_city=%r radius=%dkm targets=%s",
+            loc_ctx.search_mode, loc_ctx.home_city,
+            loc_ctx.search_radius_km, loc_ctx.target_cities,
+        )
+
     # Always prepend universal aggregators (RemoteOK, WWR) if enabled —
     # they run even when no per-company CSV/sources are provided.
-    aggregators = _universal_aggregator_sources()
+    aggregators = _universal_aggregator_sources(location_ctx=loc_ctx)
     sources_list = aggregators + loaded
 
     if not sources_list:
@@ -573,17 +686,35 @@ async def run_collector_pipeline_async(
                     cancelled_early = True
                     break
                 if records:
-                    with_records += 1
-                    for r in records:
-                        by_prov[r.provider] = by_prov.get(r.provider, 0) + 1
-                    buffer.extend(records)
-                    logger.info(
-                        "[collect]   → %3d records  (reason: %s)",
-                        len(records),
-                        _reason or "ok",
-                    )
-                    if len(buffer) >= batch_size:
-                        await flush()
+                    # Location post-filter: for local/target modes, drop ATS board
+                    # records whose location field doesn't match the user's context.
+                    if loc_ctx.search_mode in ("local", "target"):
+                        before = len(records)
+                        records = [
+                            r for r in records
+                            if r.provider not in _ATS_BOARD_PROVIDERS
+                            or _ats_location_matches(
+                                str(r.raw_payload.get("location") or ""), loc_ctx
+                            )
+                        ]
+                        dropped = before - len(records)
+                        if dropped:
+                            logger.debug(
+                                "[collect]   location filter dropped %d/%d records from %s",
+                                dropped, before, _row.company_name,
+                            )
+                    if records:
+                        with_records += 1
+                        for r in records:
+                            by_prov[r.provider] = by_prov.get(r.provider, 0) + 1
+                        buffer.extend(records)
+                        logger.info(
+                            "[collect]   → %3d records  (reason: %s)",
+                            len(records),
+                            _reason or "ok",
+                        )
+                        if len(buffer) >= batch_size:
+                            await flush()
                 elif _reason:
                     logger.info("[collect]   → 0 records  (reason: %s)", _reason)
             await flush()

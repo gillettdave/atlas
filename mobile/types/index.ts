@@ -346,9 +346,17 @@ export interface CandidateProfile {
   website_url: string | null
   headline: string | null
   summary: string | null
+  home_city: string | null
+  home_lat: number | null
+  home_lng: number | null
+  search_radius_km: number
+  target_cities: string[] | null
+  search_mode: string
   created_at: string
   updated_at: string
 }
+
+export type SearchMode = 'remote' | 'local' | 'both' | 'target' | 'all'
 
 export interface CandidateProfileUpdate {
   full_name?: string | null
@@ -359,6 +367,12 @@ export interface CandidateProfileUpdate {
   website_url?: string | null
   headline?: string | null
   summary?: string | null
+  home_city?: string | null
+  home_lat?: number | null
+  home_lng?: number | null
+  search_radius_km?: number
+  target_cities?: string[] | null
+  search_mode?: SearchMode
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────────────

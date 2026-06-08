@@ -94,6 +94,9 @@ def collect_jsearch(
     records: list[RawCollectedRecord] = []
     seen_ids: set[str] = set()
 
+    location_hint: str = (row.location_hint or "").strip()
+    radius_km: int = row.radius_km or 0
+
     for query in queries:
         if len(records) >= max_jobs:
             break
@@ -110,8 +113,13 @@ def collect_jsearch(
                 "num_pages": 1,
                 "employment_types": employment_types,
                 "date_posted": date_posted,
-                "remote_jobs_only": "true",
             }
+            if location_hint:
+                params["location"] = location_hint
+                if radius_km > 0:
+                    params["radius"] = str(radius_km)
+            else:
+                params["remote_jobs_only"] = "true"
 
             try:
                 resp = requests.get(_API_BASE, headers=headers, params=params, timeout=(12, 30))

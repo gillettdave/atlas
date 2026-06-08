@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as DocumentPicker from 'expo-document-picker'
 import { api } from '../../services/api'
 import { EmptyState } from '../../components/EmptyState'
-import type { CareerFact, ProfileQuestion, TimelineEntry, CandidateProfileUpdate } from '../../types'
+import type { CareerFact, ProfileQuestion, TimelineEntry, CandidateProfileUpdate, SearchMode } from '../../types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -170,6 +170,16 @@ function LabeledField({
   )
 }
 
+const SEARCH_MODES: { value: SearchMode; label: string; desc: string }[] = [
+  { value: 'remote', label: '🌍 Remote',       desc: 'Remote-only jobs worldwide' },
+  { value: 'local',  label: '📍 Local',         desc: 'Jobs near your home city' },
+  { value: 'both',   label: '⚡ Both',           desc: 'Remote + local combined' },
+  { value: 'target', label: '🎯 Target Cities',  desc: 'Jobs in your target cities' },
+  { value: 'all',    label: '🗺️ All',            desc: 'No location filtering' },
+]
+
+const RADIUS_OPTIONS = [25, 50, 100, 200]
+
 function PersonalInfoTab() {
   const queryClient = useQueryClient()
 
@@ -180,18 +190,22 @@ function PersonalInfoTab() {
 
   const [form, setForm] = useState<CandidateProfileUpdate>({})
   const [initialised, setInitialised] = useState(false)
+  const [targetCityInput, setTargetCityInput] = useState('')
 
-  // Pre-fill form once data loads
   if (profile !== undefined && !initialised) {
     setForm({
-      full_name:    profile?.full_name    ?? '',
-      email:        profile?.email        ?? '',
-      phone:        profile?.phone        ?? '',
-      location:     profile?.location     ?? '',
-      linkedin_url: profile?.linkedin_url ?? '',
-      website_url:  profile?.website_url  ?? '',
-      headline:     profile?.headline     ?? '',
-      summary:      profile?.summary      ?? '',
+      full_name:        profile?.full_name        ?? '',
+      email:            profile?.email            ?? '',
+      phone:            profile?.phone            ?? '',
+      location:         profile?.location         ?? '',
+      linkedin_url:     profile?.linkedin_url     ?? '',
+      website_url:      profile?.website_url      ?? '',
+      headline:         profile?.headline         ?? '',
+      summary:          profile?.summary          ?? '',
+      home_city:        profile?.home_city        ?? '',
+      search_radius_km: profile?.search_radius_km ?? 50,
+      target_cities:    profile?.target_cities    ?? [],
+      search_mode:      (profile?.search_mode as SearchMode) ?? 'remote',
     })
     setInitialised(true)
   }
@@ -208,6 +222,23 @@ function PersonalInfoTab() {
   const set = (key: keyof CandidateProfileUpdate) => (value: string) =>
     setForm((prev) => ({ ...prev, [key]: value || null }))
 
+  function addTargetCity() {
+    const city = targetCityInput.trim()
+    if (!city) return
+    const existing = form.target_cities ?? []
+    if (!existing.includes(city)) {
+      setForm((prev) => ({ ...prev, target_cities: [...existing, city] }))
+    }
+    setTargetCityInput('')
+  }
+
+  function removeTargetCity(city: string) {
+    setForm((prev) => ({
+      ...prev,
+      target_cities: (prev.target_cities ?? []).filter((c) => c !== city),
+    }))
+  }
+
   if (isPending) {
     return (
       <View className="flex-1 items-center justify-center">
@@ -215,6 +246,9 @@ function PersonalInfoTab() {
       </View>
     )
   }
+
+  const showRadius = form.search_mode === 'local' || form.search_mode === 'both'
+  const showTargetCities = form.search_mode === 'target' || form.search_mode === 'all'
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
@@ -230,6 +264,109 @@ function PersonalInfoTab() {
       <LabeledField label="LinkedIn URL" value={form.linkedin_url ?? ''} onChangeText={set('linkedin_url')} keyboardType="url" autoCapitalize="none" placeholder="https://linkedin.com/in/yourname" />
       <LabeledField label="Website"      value={form.website_url  ?? ''} onChangeText={set('website_url')}  keyboardType="url" autoCapitalize="none" placeholder="https://yoursite.com" />
       <LabeledField label="Professional Summary" value={form.summary ?? ''} onChangeText={set('summary')} multiline placeholder="Optional — overrides the AI summary if set" />
+
+      {/* ── Location Search ──────────────────────────────────────────────── */}
+      <View className="mt-2 mb-4">
+        <Text className="text-gray-500 text-xs uppercase font-semibold tracking-widest mb-3">
+          Job Search Location
+        </Text>
+
+        {/* Search mode picker */}
+        <Text className="text-gray-500 text-xs uppercase font-semibold tracking-wider mb-1.5">
+          Search Mode
+        </Text>
+        <View className="flex-row flex-wrap gap-2 mb-4">
+          {SEARCH_MODES.map(({ value, label }) => (
+            <Pressable
+              key={value}
+              className={`rounded-full px-3 py-1.5 active:opacity-75 ${
+                form.search_mode === value ? 'bg-indigo-600' : 'bg-gray-800'
+              }`}
+              onPress={() => setForm((prev) => ({ ...prev, search_mode: value }))}
+            >
+              <Text className={`text-sm ${form.search_mode === value ? 'text-white' : 'text-gray-400'}`}>
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {/* Home city — shown for local/both */}
+        {showRadius && (
+          <LabeledField
+            label="Home City"
+            value={form.home_city ?? ''}
+            onChangeText={set('home_city')}
+            placeholder="e.g. Halifax, NS"
+          />
+        )}
+
+        {/* Radius picker — shown for local/both */}
+        {showRadius && (
+          <View className="mb-4">
+            <Text className="text-gray-500 text-xs uppercase font-semibold tracking-wider mb-1.5">
+              Search Radius
+            </Text>
+            <View className="flex-row gap-2">
+              {RADIUS_OPTIONS.map((km) => (
+                <Pressable
+                  key={km}
+                  className={`flex-1 rounded-xl py-2.5 items-center active:opacity-75 ${
+                    form.search_radius_km === km ? 'bg-indigo-600' : 'bg-gray-900 border border-gray-800'
+                  }`}
+                  onPress={() => setForm((prev) => ({ ...prev, search_radius_km: km }))}
+                >
+                  <Text className={`text-sm font-medium ${form.search_radius_km === km ? 'text-white' : 'text-gray-400'}`}>
+                    {km} km
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Target cities — shown for target/all */}
+        {showTargetCities && (
+          <View className="mb-4">
+            <Text className="text-gray-500 text-xs uppercase font-semibold tracking-wider mb-1.5">
+              Target Cities
+            </Text>
+            {/* Existing city chips */}
+            {(form.target_cities ?? []).length > 0 && (
+              <View className="flex-row flex-wrap gap-2 mb-2">
+                {(form.target_cities ?? []).map((city) => (
+                  <Pressable
+                    key={city}
+                    className="flex-row items-center bg-indigo-900 rounded-full px-3 py-1 gap-1.5 active:opacity-75"
+                    onPress={() => removeTargetCity(city)}
+                  >
+                    <Text className="text-indigo-200 text-sm">{city}</Text>
+                    <Text className="text-indigo-400 text-xs">✕</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+            {/* Add city input */}
+            <View className="flex-row gap-2">
+              <TextInput
+                className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-gray-200 text-sm"
+                value={targetCityInput}
+                onChangeText={setTargetCityInput}
+                placeholder="Add a city (e.g. Austin, TX)"
+                placeholderTextColor="#4b5563"
+                onSubmitEditing={addTargetCity}
+                returnKeyType="done"
+              />
+              <Pressable
+                className="bg-indigo-600 rounded-xl px-4 items-center justify-center active:opacity-75"
+                onPress={addTargetCity}
+              >
+                <Text className="text-white font-semibold">Add</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+      </View>
 
       <Pressable
         className="bg-indigo-600 rounded-xl py-3.5 items-center mt-2 active:opacity-75"

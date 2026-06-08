@@ -38,6 +38,7 @@ from ..models.digest_item import DigestItem
 from ..models.job import Job
 from ..models.job_score import JobScore
 from ..models.pipeline_event import PipelineEvent
+from ..models.user_job_score import UserJobScore
 from ..constants import SEEDED_LOCAL_USER_ID
 from . import feedback as feedback_svc
 from . import profiles as profiles_svc
@@ -132,22 +133,44 @@ def _latest_profile_score_subquery(profile_id: uuid.UUID):
     )
 
 
+def _user_score_subquery(user_id: uuid.UUID):
+    """Subquery: current user_job_scores row per job for a given user.
+
+    Returns a subquery with columns (job_id, score, hidden_gem).
+    This is the primary score source post-P2.1. Falls back to
+    Job.ranking_score via COALESCE for jobs not yet scored by this user.
+    """
+    return (
+        select(
+            UserJobScore.job_id,
+            UserJobScore.score.label("user_score"),
+            UserJobScore.hidden_gem.label("user_hidden_gem"),
+        )
+        .where(UserJobScore.user_id == user_id)
+        .subquery()
+    )
+
+
 def _fresh_candidates(
     db: Session,
     *,
     now: datetime,
     cfg: DigestConfig,
     over_fetch: int,
+    user_id: uuid.UUID = SEEDED_LOCAL_USER_ID,
     profile_id: Optional[uuid.UUID] = None,
     exclude_ids: Optional[set[uuid.UUID]] = None,
 ) -> list[Job]:
     cutoff = now - timedelta(hours=cfg.fresh_hours)
 
+    us = _user_score_subquery(user_id)
     if profile_id is not None:
         ps = _latest_profile_score_subquery(profile_id)
-        effective_score = func.coalesce(ps.c.profile_score, Job.ranking_score)
+        # Prefer user_job_scores, then profile job_scores, then global ranking_score.
+        effective_score = func.coalesce(us.c.user_score, ps.c.profile_score, Job.ranking_score)
         stmt = (
             select(Job)
+            .outerjoin(us, us.c.job_id == Job.id)
             .outerjoin(ps, ps.c.job_id == Job.id)
             .where(
                 Job.is_active.is_(True),
@@ -158,14 +181,16 @@ def _fresh_candidates(
             .limit(over_fetch)
         )
     else:
+        effective_score = func.coalesce(us.c.user_score, Job.ranking_score)
         stmt = (
             select(Job)
+            .outerjoin(us, us.c.job_id == Job.id)
             .where(
                 Job.is_active.is_(True),
                 Job.first_seen_at >= cutoff,
-                Job.ranking_score >= cfg.min_ranking_score,
+                effective_score >= cfg.min_ranking_score,
             )
-            .order_by(Job.ranking_score.desc(), Job.first_seen_at.desc())
+            .order_by(effective_score.desc(), Job.first_seen_at.desc())
             .limit(over_fetch)
         )
 
@@ -180,26 +205,22 @@ def _gem_candidates(
     now: datetime,
     cfg: DigestConfig,
     over_fetch: int,
+    user_id: uuid.UUID = SEEDED_LOCAL_USER_ID,
     profile_id: Optional[uuid.UUID] = None,
     exclude_ids: Optional[set[uuid.UUID]] = None,
 ) -> tuple[list[Job], set[uuid.UUID]]:
     """Return (candidate_jobs, ids_flagged_as_gem_in_latest_score).
 
     Gems come from two sources, unioned and deduped:
-    1) Jobs whose latest job_scores row has hidden_gem = True (for this profile).
+    1) Jobs whose user_job_scores row has hidden_gem = True.
     2) Active jobs older than fresh_hours with effective score >= gem_min_score.
     """
     cutoff = now - timedelta(hours=cfg.fresh_hours)
 
-    # (1) latest-score-hidden-gem scoped to profile when available
-    gem_score_filter = JobScore.hidden_gem.is_(True)
-    if profile_id is not None:
-        gem_score_filter = and_(JobScore.hidden_gem.is_(True), JobScore.profile_id == profile_id)
-
+    # (1) hidden_gem flag from user_job_scores (primary) or job_scores (fallback)
     latest_gem_stmt = (
-        select(JobScore.job_id)
-        .where(gem_score_filter)
-        .order_by(JobScore.created_at.desc())
+        select(UserJobScore.job_id)
+        .where(UserJobScore.user_id == user_id, UserJobScore.hidden_gem.is_(True))
         .limit(over_fetch * 3)
     )
     gem_ids: set[uuid.UUID] = set()
@@ -208,9 +229,26 @@ def _gem_candidates(
         if len(gem_ids) >= over_fetch:
             break
 
+    # Fall back to job_scores if no user scores yet
+    if not gem_ids:
+        gem_score_filter = JobScore.hidden_gem.is_(True)
+        if profile_id is not None:
+            gem_score_filter = and_(JobScore.hidden_gem.is_(True), JobScore.profile_id == profile_id)
+        fallback_stmt = (
+            select(JobScore.job_id)
+            .where(gem_score_filter)
+            .order_by(JobScore.created_at.desc())
+            .limit(over_fetch * 3)
+        )
+        for jid in db.execute(fallback_stmt).scalars().all():
+            gem_ids.add(jid)
+            if len(gem_ids) >= over_fetch:
+                break
+
+    us = _user_score_subquery(user_id)
     if profile_id is not None:
         ps = _latest_profile_score_subquery(profile_id)
-        effective_score = func.coalesce(ps.c.profile_score, Job.ranking_score)
+        effective_score = func.coalesce(us.c.user_score, ps.c.profile_score, Job.ranking_score)
         older_strong = and_(
             Job.first_seen_at < cutoff,
             effective_score >= cfg.gem_min_score,
@@ -218,21 +256,24 @@ def _gem_candidates(
         condition = or_(Job.id.in_(gem_ids), older_strong) if gem_ids else older_strong
         stmt = (
             select(Job)
+            .outerjoin(us, us.c.job_id == Job.id)
             .outerjoin(ps, ps.c.job_id == Job.id)
             .where(Job.is_active.is_(True), condition)
             .order_by(effective_score.desc(), Job.last_seen_at.desc())
             .limit(over_fetch)
         )
     else:
+        effective_score = func.coalesce(us.c.user_score, Job.ranking_score)
         older_strong = and_(
             Job.first_seen_at < cutoff,
-            Job.ranking_score >= cfg.gem_min_score,
+            effective_score >= cfg.gem_min_score,
         )
         condition = or_(Job.id.in_(gem_ids), older_strong) if gem_ids else older_strong
         stmt = (
             select(Job)
+            .outerjoin(us, us.c.job_id == Job.id)
             .where(Job.is_active.is_(True), condition)
-            .order_by(Job.ranking_score.desc(), Job.last_seen_at.desc())
+            .order_by(effective_score.desc(), Job.last_seen_at.desc())
             .limit(over_fetch)
         )
 
@@ -346,11 +387,13 @@ def build_digest(
 
     fresh_pool = _fresh_candidates(
         db, now=now, cfg=cfg, over_fetch=fresh_pool_size,
+        user_id=SEEDED_LOCAL_USER_ID,
         profile_id=digest_profile_id,
         exclude_ids=exclude_ids,
     )
     gem_pool, gem_flagged_ids = _gem_candidates(
         db, now=now, cfg=cfg, over_fetch=gem_pool_size,
+        user_id=SEEDED_LOCAL_USER_ID,
         profile_id=digest_profile_id,
         exclude_ids=exclude_ids,
     )
