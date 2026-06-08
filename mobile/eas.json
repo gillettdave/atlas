@@ -13,7 +13,7 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE": "http://YOUR_SERVER_LOCAL_IP:8000"
+        "EXPO_PUBLIC_API_BASE": "http://houseofdave.mynetgear.com:8000"
       }
     },
     "production": {
