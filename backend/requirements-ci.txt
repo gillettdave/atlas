@@ -1,0 +1,40 @@
+# CI requirements — identical to requirements.txt but without playwright.
+# Playwright is only used by Workday/ATS collectors and is never imported
+# in unit tests. Excluding it avoids browser-binary downloads on CI runners.
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+
+# Database
+SQLAlchemy>=2.0.35
+alembic>=1.13.3
+psycopg[binary]>=3.2.3
+
+# Settings / validation
+pydantic>=2.9.0
+pydantic-settings>=2.5.2
+
+# Utilities
+python-dotenv>=1.0.1
+openai>=1.50.0
+croniter>=2.0.0
+httpx>=0.27.2
+PyJWT>=2.9.0
+tenacity>=9.0.0
+
+# Parsing (shared with collectors when migrated into backend)
+beautifulsoup4>=4.12.0
+lxml>=5.3.0
+requests>=2.32.0
+
+# Application packages — Word export for copy/paste / email workflows
+python-docx>=1.1.2
+pypdf>=5.0.0
+striprtf>=0.0.26
+
+# Dev
+ruff>=0.6.9
+pytest>=8.3.3
+ddgs>=7.0

@@ -38,7 +38,18 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libpq-dev gcc
 
       - name: Install dependencies
-        run: pip install -r requirements.txt --prefer-binary
+        # requirements-ci.txt is requirements.txt minus playwright (not needed for unit tests).
+        run: pip install -r requirements-ci.txt --prefer-binary
+
+      - name: Check for dependency conflicts
+        run: pip check
+
+      - name: Smoke-test app imports
+        run: |
+          python -c "import app.main" && echo "app.main OK"
+          python -c "import app.models" && echo "app.models OK"
+          python -c "import app.services.ranker" && echo "ranker OK"
+          python -c "import app.services.digest_builder" && echo "digest_builder OK"
 
       - name: Run pytest
-        run: python -m pytest tests/ -q --tb=short
+        run: python -m pytest tests/ -v --tb=long
