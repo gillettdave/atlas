@@ -283,10 +283,13 @@ def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tu
         data_o, gh_tag = json_from_get(
             f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
             headers=_PUBLIC_UA_HEADERS,
+            timeout=(10, 30),  # 10s connect, 30s read — hard cap per board
         )
         data = data_o if isinstance(data_o, dict) else {}
         if gh_tag:
             return [], f"greenhouse_api:{gh_tag}"
+        _DESC_FETCH_LIMIT = 60  # max descriptions per board (~30s) — backfill script handles the rest
+        _desc_fetched = 0
         for item in data.get("jobs", []):
             title = (item.get("title") or "").strip()
             if _bad_title(title):
@@ -295,8 +298,9 @@ def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tu
             job_id = str(item.get("id")) if item.get("id") is not None else None
             # Fetch full description from detail endpoint (rate-limited)
             description: Optional[str] = None
-            if slug and job_id:
+            if slug and job_id and _desc_fetched < _DESC_FETCH_LIMIT:
                 description = _fetch_greenhouse_description(slug, job_id)
+                _desc_fetched += 1
                 time.sleep(0.5)  # 2 req/s max to avoid bans
             records.append(RawCollectedRecord(
                 provider="greenhouse",

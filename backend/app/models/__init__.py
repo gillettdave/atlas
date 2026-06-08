@@ -35,6 +35,7 @@ from .discovery_seed import DiscoverySeed
 from .discovery_event import DiscoveryEvent
 from .email_sync import EmailSyncSource, EmailSyncEvent
 from .candidate_profile import CandidateProfile
+from .user_job_score import UserJobScore
 
 __all__ = [
     "Base",
@@ -67,4 +68,5 @@ __all__ = [
     "EmailSyncSource",
     "EmailSyncEvent",
     "CandidateProfile",
+    "UserJobScore",
 ]

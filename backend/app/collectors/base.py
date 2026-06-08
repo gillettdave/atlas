@@ -28,6 +28,9 @@ class SourceRow:
     cryptojobslist_fallback_jobs_page: str = ""
     resolution_type: str = ""
     notes: str = ""
+    # Location context passed by the pipeline for location-aware collectors
+    location_hint: str = ""   # city name (e.g. "Halifax, NS") for JSearch/Adzuna
+    radius_km: int = 0        # 0 = not set; >0 = passed to supporting APIs
 
 
 @dataclass

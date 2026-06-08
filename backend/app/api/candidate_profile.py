@@ -24,6 +24,14 @@ class CandidateProfileSchema(BaseModel):
     headline: str | None = None
     summary: str | None = None
 
+    # Location search (Phase 1)
+    home_city: str | None = None
+    home_lat: float | None = None
+    home_lng: float | None = None
+    search_radius_km: int = 50
+    target_cities: list[str] | None = None
+    search_mode: str = "remote"
+
     class Config:
         from_attributes = True
 

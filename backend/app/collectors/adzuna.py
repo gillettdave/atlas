@@ -68,6 +68,7 @@ def _build_params(
     results_per_page: int,
     *,
     where: str = "",
+    distance_km: int = 0,
     category: str = "",
     max_days_old: int = 14,
     full_time: bool = True,
@@ -83,6 +84,8 @@ def _build_params(
     }
     if where:
         params["where"] = where
+    if where and distance_km > 0:
+        params["distance_from_location_km"] = distance_km
     if category:
         params["category"] = category
     if full_time:
@@ -120,6 +123,9 @@ def collect_adzuna(
     else:
         queries = _DEFAULT_QUERIES
 
+    location_hint: str = (row.location_hint or "").strip()
+    radius_km: int = row.radius_km or 0
+
     records: list[RawCollectedRecord] = []
     seen_ids: set[str] = set()
 
@@ -138,6 +144,8 @@ def collect_adzuna(
                 params = _build_params(
                     app_id, app_key, query, page, results_per_page,
                     max_days_old=max_days_old,
+                    where=location_hint,
+                    distance_km=radius_km,
                 )
 
                 try:
