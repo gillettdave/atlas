@@ -13,13 +13,13 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE": "http://houseofdave.mynetgear.com:8000"
+        "EXPO_PUBLIC_API_BASE": "https://houseofdave.mynetgear.com"
       }
     },
     "production": {
       "distribution": "store",
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://YOUR_SERVER_DOMAIN_OR_IP:8000"
+        "EXPO_PUBLIC_API_BASE": "https://houseofdave.mynetgear.com"
       }
     }
   }
