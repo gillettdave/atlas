@@ -894,31 +894,29 @@ export default function FeedScreen() {
   })
   const homeCity = candidateProfile?.home_city ?? ''
 
-  const [cancelling, setCancelling] = useState(false)
+  const [searching, setSearching] = useState(false)
 
-  const findJobsMutation = useMutation({
-    mutationFn: () => api.findJobs(),
-    onSuccess: (result) => {
-      setCancelling(false)
-      queryClient.invalidateQueries({ queryKey: ['digests'] })
-      queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
-      if (result.new_jobs > 0) {
-        Alert.alert(
-          'Done',
-          `Found ${result.new_jobs} new job${result.new_jobs === 1 ? '' : 's'} in ${Math.round(result.duration_sec)}s`,
-        )
-      } else {
-        Alert.alert('Up to date', 'No new jobs found this time.')
-      }
-    },
-    onError: (e: Error) => {
-      setCancelling(false)
-      Alert.alert('Find Jobs failed', e.message)
-    },
-  })
+  async function handleFindJobs() {
+    if (searching) return
+    setSearching(true)
+    // Fire-and-forget — don't await, so the user can tab away freely.
+    // The server runs the full pipeline; pull-to-refresh when done.
+    api.findJobs()
+      .then((result) => {
+        queryClient.invalidateQueries({ queryKey: ['digests'] })
+        queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
+        const msg = result.new_jobs > 0
+          ? `Found ${result.new_jobs} new job${result.new_jobs === 1 ? '' : 's'} in ${Math.round(result.duration_sec)}s`
+          : 'No new jobs found this time.'
+        Alert.alert('Search complete', msg)
+      })
+      .catch((e: Error) => {
+        Alert.alert('Find Jobs failed', e.message)
+      })
+      .finally(() => setSearching(false))
+  }
 
   async function handleStopAndDigest() {
-    setCancelling(true)
     try {
       await api.cancelPipeline()
     } catch {
@@ -944,18 +942,16 @@ export default function FeedScreen() {
           ))}
         </View>
 
-        {/* Find Jobs / Stop & Digest button */}
-        {findJobsMutation.isPending ? (
+        {/* Find Jobs / Stop button */}
+        {searching ? (
           <Pressable
-            className={`ml-2 rounded-lg px-3 py-2 active:opacity-75 ${cancelling ? 'bg-gray-600' : 'bg-red-600'}`}
+            className="ml-2 rounded-lg px-3 py-2 active:opacity-75 bg-red-900"
             onPress={handleStopAndDigest}
-            disabled={cancelling}
           >
-            {cancelling ? (
-              <ActivityIndicator size="small" color="white" />
-            ) : (
-              <Text className="text-white text-xs font-semibold">Stop & Digest</Text>
-            )}
+            <View className="flex-row items-center gap-1.5">
+              <ActivityIndicator size="small" color="#fca5a5" />
+              <Text className="text-red-300 text-xs font-semibold">Searching…</Text>
+            </View>
           </Pressable>
         ) : (
           <Pressable
@@ -963,10 +959,10 @@ export default function FeedScreen() {
             onPress={() => {
               Alert.alert(
                 'Find Jobs',
-                'This searches all job boards and scores results against your profile. It takes 2–5 minutes.\n\nLeave the app open while it runs.',
+                'Searches all job boards and scores results against your profile. Takes 2–5 minutes — you can use the app freely while it runs.',
                 [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Start Search', onPress: () => findJobsMutation.mutate() },
+                  { text: 'Start Search', onPress: handleFindJobs },
                 ]
               )
             }}
