@@ -117,10 +117,14 @@ export default function SettingsScreen() {
             setRescoring(true)
             try {
               const result = await api.rescoreJobs({ onlyUnscored: false })
+              // Rebuild digest so the feed reflects the new scores
+              await api.generateDigest()
               queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+              queryClient.invalidateQueries({ queryKey: ['digests'] })
+              queryClient.invalidateQueries({ queryKey: ['digest'] })
               Alert.alert(
                 'Rescore Complete ✓',
-                `Scored ${result.scored} jobs · ${result.hidden_gems} hidden gems found\n\nStrong: ${result.by_bucket?.strong ?? 0} · Maybe: ${result.by_bucket?.maybe ?? 0}`
+                `Scored ${result.scored} jobs · ${result.hidden_gems} hidden gems found\n\nStrong: ${result.by_bucket?.strong ?? 0} · Maybe: ${result.by_bucket?.maybe ?? 0}\n\nFeed updated.`
               )
             } catch (e: unknown) {
               Alert.alert('Rescore Failed', e instanceof Error ? e.message : 'Unknown error')
