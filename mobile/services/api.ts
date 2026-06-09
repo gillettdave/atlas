@@ -256,6 +256,17 @@ export const api = {
 
   getProfiles: () => request<{ total: number; items: Profile[] }>('/profiles').then(r => r.items),
 
+  getTemplates: () =>
+    request<{ templates: { slug: string; display_name: string; description: string }[] }>(
+      '/profiles/templates'
+    ).then(r => r.templates),
+
+  createProfileFromTemplate: (templateSlug: string, preferredRemote?: 'remote' | 'hybrid' | 'onsite') =>
+    request<Profile>('/profiles/from-template', {
+      method: 'POST',
+      body: JSON.stringify({ template_slug: templateSlug, preferred_remote: preferredRemote ?? null }),
+    }),
+
   // ── Schedules ───────────────────────────────────────────────────────────────
 
   getSchedules: async (params?: { only_active?: boolean }): Promise<Schedule[]> => {
