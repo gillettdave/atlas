@@ -7,12 +7,11 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native'
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { useConfigStore } from '../../stores/config'
 import { api } from '../../services/api'
-import type { CollectorSchedule } from '../../types'
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -20,27 +19,6 @@ function SectionHeader({ title }: { title: string }) {
       {title}
     </Text>
   )
-}
-
-type FrequencyOption = 'off' | '1x' | '2x' | '3x' | '4x'
-
-const FREQUENCY_LABELS: Record<FrequencyOption, string> = {
-  off: 'Off',
-  '1x': '1×/day',
-  '2x': '2×/day',
-  '3x': '3×/day',
-  '4x': '4×/day',
-}
-
-function scheduleToFrequency(schedule: CollectorSchedule | undefined): FrequencyOption {
-  if (!schedule || !schedule.is_active) return 'off'
-  if (schedule.cadence === 'daily') return '1x'
-  if (schedule.cadence === 'every_n_minutes' && schedule.interval_minutes === 360) return '4x'
-  if (schedule.cadence === 'cron') {
-    if (schedule.cron_expression === '0 8,20 * * *') return '2x'
-    if (schedule.cron_expression === '0 8,14,20 * * *') return '3x'
-  }
-  return '1x'
 }
 
 function BucketRow({ label, value, color }: { label: string; value: number; color: string }) {
@@ -52,15 +30,43 @@ function BucketRow({ label, value, color }: { label: string; value: number; colo
   )
 }
 
+function formatRelativeTime(isoString: string | null): string {
+  if (!isoString) return 'Never'
+  const date = new Date(isoString)
+  const diffMs = Date.now() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays}d ago`
+}
+
+function formatTimeUntil(isoString: string | null): string {
+  if (!isoString) return '—'
+  const date = new Date(isoString)
+  const diffMs = date.getTime() - Date.now()
+  if (diffMs <= 0) return 'soon'
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 60) return `in ${diffMins}m`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `in ${diffHours}h`
+  const diffDays = Math.floor(diffHours / 24)
+  return `in ${diffDays}d`
+}
+
 export default function SettingsScreen() {
   const router = useRouter()
-  const { apiBase, adminToken, activeProfileId, setApiBase, setAdminToken, setActiveProfile } =
+  const { apiBase, adminToken, activeProfileId, devMode, setApiBase, setAdminToken, setActiveProfile, setDevMode } =
     useConfigStore()
 
   const [draftBase, setDraftBase] = useState(apiBase)
   const [draftToken, setDraftToken] = useState(adminToken)
   const [testing, setTesting] = useState(false)
   const [rescoring, setRescoring] = useState(false)
+  const [refreshingDigest, setRefreshingDigest] = useState(false)
+  const versionTapCount = useRef(0)
+  const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const queryClient = useQueryClient()
 
@@ -75,47 +81,12 @@ export default function SettingsScreen() {
     retry: false,
   })
 
-  const { data: collectorSchedules } = useQuery({
-    queryKey: ['collector-schedules'],
-    queryFn: () => api.getCollectorSchedules(),
+  const { data: collectionStatus } = useQuery({
+    queryKey: ['collection-status'],
+    queryFn: () => api.getCollectionStatus(),
     retry: false,
+    refetchInterval: 5 * 60 * 1000, // refresh every 5 mins
   })
-
-  const activeCollectorSchedule = collectorSchedules?.find(s => s.is_active) ?? collectorSchedules?.[0]
-  const [savingFreq, setSavingFreq] = useState(false)
-
-  async function setCollectionFrequency(freq: FrequencyOption) {
-    setSavingFreq(true)
-    try {
-      const existing = activeCollectorSchedule
-
-      if (freq === 'off') {
-        if (existing) {
-          await api.updateCollectorSchedule(existing.id, { is_active: false })
-        }
-      } else {
-        const configs: Record<FrequencyOption, object> = {
-          off: {},
-          '1x': { cadence: 'daily', hour_utc: 9, minute_utc: 0, cron_expression: null, interval_minutes: null },
-          '2x': { cadence: 'cron', cron_expression: '0 8,20 * * *', hour_utc: null, minute_utc: null, interval_minutes: null },
-          '3x': { cadence: 'cron', cron_expression: '0 8,14,20 * * *', hour_utc: null, minute_utc: null, interval_minutes: null },
-          '4x': { cadence: 'every_n_minutes', interval_minutes: 360, cron_expression: null, hour_utc: null, minute_utc: null },
-        }
-        const patch = { ...configs[freq], is_active: true, then_import: true, then_rank: true, then_digest: true }
-
-        if (existing) {
-          await api.updateCollectorSchedule(existing.id, patch)
-        } else {
-          await api.createCollectorSchedule({ name: 'Auto Collection', ...patch } as Parameters<typeof api.createCollectorSchedule>[0])
-        }
-      }
-      queryClient.invalidateQueries({ queryKey: ['collector-schedules'] })
-    } catch (e: unknown) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to save schedule')
-    } finally {
-      setSavingFreq(false)
-    }
-  }
 
   function save() {
     setApiBase(draftBase.trim())
@@ -137,7 +108,7 @@ export default function SettingsScreen() {
   async function rescoreAll() {
     Alert.alert(
       'Rescore All Jobs',
-      'This will re-rank all 800+ jobs in your database using your current profile and approved facts. It may take a moment.',
+      'This will re-rank all jobs in your database using your current profile and approved facts. It may take a moment.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -149,7 +120,7 @@ export default function SettingsScreen() {
               queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
               Alert.alert(
                 'Rescore Complete ✓',
-                `Scored ${result.scored} jobs · ${result.hidden_gems} hidden gems found\n\nTop: ${result.by_bucket?.top ?? 0} · Strong: ${result.by_bucket?.strong ?? 0} · Maybe: ${result.by_bucket?.maybe ?? 0}`
+                `Scored ${result.scored} jobs · ${result.hidden_gems} hidden gems found\n\nStrong: ${result.by_bucket?.strong ?? 0} · Maybe: ${result.by_bucket?.maybe ?? 0}`
               )
             } catch (e: unknown) {
               Alert.alert('Rescore Failed', e instanceof Error ? e.message : 'Unknown error')
@@ -160,6 +131,33 @@ export default function SettingsScreen() {
         },
       ]
     )
+  }
+
+  function handleVersionTap() {
+    versionTapCount.current += 1
+    if (versionTapTimer.current) clearTimeout(versionTapTimer.current)
+    if (versionTapCount.current >= 5) {
+      versionTapCount.current = 0
+      const next = !devMode
+      setDevMode(next)
+      Alert.alert(next ? '🛠 Developer mode on' : 'Developer mode off', next ? 'Dev tools unlocked.' : 'Dev tools hidden.')
+    } else {
+      versionTapTimer.current = setTimeout(() => { versionTapCount.current = 0 }, 2000)
+    }
+  }
+
+  async function refreshDigest() {
+    setRefreshingDigest(true)
+    try {
+      await api.generateDigest({ digest_type: 'daily' })
+      queryClient.invalidateQueries({ queryKey: ['digests'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+      Alert.alert('Digest Refreshed ✓', 'Your feed has been updated.')
+    } catch (e: unknown) {
+      Alert.alert('Refresh Failed', e instanceof Error ? e.message : 'Unknown error')
+    } finally {
+      setRefreshingDigest(false)
+    }
   }
 
   return (
@@ -217,12 +215,40 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
 
+      {/* ── Feed Status ────────────────────────────────────── */}
+      <SectionHeader title="Feed Status" />
+      <View className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3 mb-8">
+        {collectionStatus ? (
+          <>
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-gray-400 text-sm">Jobs in database</Text>
+              <Text className="text-gray-200 font-semibold text-sm">
+                {collectionStatus.total_active_jobs.toLocaleString()}
+              </Text>
+            </View>
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className="text-gray-400 text-sm">Last updated</Text>
+              <Text className="text-gray-300 text-sm">
+                {formatRelativeTime(collectionStatus.last_collected_at)}
+              </Text>
+            </View>
+            <View className="flex-row items-center justify-between">
+              <Text className="text-gray-400 text-sm">Next update</Text>
+              <Text className="text-gray-300 text-sm">
+                {formatTimeUntil(collectionStatus.next_run_at)}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <Text className="text-gray-600 text-sm">Loading feed status…</Text>
+        )}
+      </View>
+
       {/* ── Pipeline Stats ─────────────────────────────────── */}
       {stats && (
         <>
           <SectionHeader title="Pipeline Overview" />
           <View className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-2">
-            <BucketRow label="🏆 Top jobs"        value={stats.jobs_active.top}    color="text-emerald-400" />
             <BucketRow label="💪 Strong"          value={stats.jobs_active.strong} color="text-indigo-400" />
             <BucketRow label="🤔 Maybe"           value={stats.jobs_active.maybe}  color="text-yellow-400" />
             <BucketRow label="⏭ Skip"             value={stats.jobs_active.skip}   color="text-gray-500" />
@@ -231,23 +257,6 @@ export default function SettingsScreen() {
               <Text className="text-gray-300 font-semibold text-sm">{stats.jobs_active.total}</Text>
             </View>
           </View>
-
-          {(stats.pending_raw_events > 0 || stats.needs_review > 0) && (
-            <View className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-2">
-              {stats.pending_raw_events > 0 && (
-                <View className="flex-row items-center justify-between px-4 py-2.5 border-b border-gray-800">
-                  <Text className="text-gray-400 text-sm">Pending raw events</Text>
-                  <Text className="text-yellow-400 font-semibold text-sm">{stats.pending_raw_events}</Text>
-                </View>
-              )}
-              {stats.needs_review > 0 && (
-                <View className="flex-row items-center justify-between px-4 py-2.5">
-                  <Text className="text-gray-400 text-sm">Needs review</Text>
-                  <Text className="text-orange-400 font-semibold text-sm">{stats.needs_review}</Text>
-                </View>
-              )}
-            </View>
-          )}
 
           {stats.latest_digest && (
             <View className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3 mb-2">
@@ -269,6 +278,23 @@ export default function SettingsScreen() {
       <SectionHeader title="Data Tools" />
       <View className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden mb-8">
         <Pressable
+          className="flex-row items-center justify-between px-4 py-3.5 border-b border-gray-800 active:opacity-75"
+          onPress={refreshDigest}
+          disabled={refreshingDigest}
+        >
+          <View className="flex-1 mr-3">
+            <Text className="text-gray-200 font-medium">Refresh Feed</Text>
+            <Text className="text-gray-500 text-xs mt-0.5">
+              Rebuild your digest from the latest jobs
+            </Text>
+          </View>
+          {refreshingDigest ? (
+            <ActivityIndicator size="small" color="#818cf8" />
+          ) : (
+            <Text className="text-indigo-400 text-sm font-semibold">Run</Text>
+          )}
+        </Pressable>
+        <Pressable
           className="flex-row items-center justify-between px-4 py-3.5 active:opacity-75"
           onPress={rescoreAll}
           disabled={rescoring}
@@ -286,48 +312,6 @@ export default function SettingsScreen() {
           )}
         </Pressable>
       </View>
-
-      {/* ── Collection Schedule ────────────────────────────── */}
-      <SectionHeader title="Collection Schedule" />
-      <View className="bg-gray-900 rounded-xl border border-gray-800 px-4 pt-4 pb-3 mb-2">
-        <Text className="text-gray-400 text-xs mb-3">
-          How often to auto-collect jobs from all sources. Each run takes up to 30 minutes.
-        </Text>
-        <View className="flex-row gap-2 flex-wrap">
-          {(['off', '1x', '2x', '3x', '4x'] as FrequencyOption[]).map(opt => {
-            const selected = scheduleToFrequency(activeCollectorSchedule) === opt
-            return (
-              <Pressable
-                key={opt}
-                onPress={() => setCollectionFrequency(opt)}
-                disabled={savingFreq}
-                className={`px-3 py-1.5 rounded-lg border ${
-                  selected
-                    ? 'bg-indigo-600 border-indigo-500'
-                    : 'bg-gray-800 border-gray-700'
-                } active:opacity-70`}
-              >
-                <Text className={`text-sm font-medium ${selected ? 'text-white' : 'text-gray-400'}`}>
-                  {FREQUENCY_LABELS[opt]}
-                </Text>
-              </Pressable>
-            )
-          })}
-          {savingFreq && <ActivityIndicator size="small" color="#818cf8" />}
-        </View>
-        {activeCollectorSchedule?.next_run_at && scheduleToFrequency(activeCollectorSchedule) !== 'off' && (
-          <Text className="text-gray-600 text-xs mt-3">
-            Next run: {new Date(activeCollectorSchedule.next_run_at).toLocaleString()}
-          </Text>
-        )}
-        {activeCollectorSchedule?.last_run_at && (
-          <Text className="text-gray-600 text-xs mt-0.5">
-            Last run: {new Date(activeCollectorSchedule.last_run_at).toLocaleString()}
-            {activeCollectorSchedule.last_status ? ` · ${activeCollectorSchedule.last_status}` : ''}
-          </Text>
-        )}
-      </View>
-      <View className="mb-8" />
 
       {/* ── Activity ───────────────────────────────────────── */}
       <SectionHeader title="Activity" />
@@ -386,10 +370,83 @@ export default function SettingsScreen() {
 
       {/* ── About ─────────────────────────────────────────── */}
       <SectionHeader title="About" />
-      <View className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3">
-        <Text className="text-gray-400 text-sm">Atlas Mobile v1.0</Text>
+      <Pressable
+        className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3"
+        onPress={handleVersionTap}
+        accessibilityLabel="App version — tap 5 times to unlock developer mode"
+      >
+        <View className="flex-row items-center justify-between">
+          <Text className="text-gray-400 text-sm">Atlas Mobile v1.0</Text>
+          {devMode && (
+            <Text className="text-yellow-500 text-xs font-semibold">DEV</Text>
+          )}
+        </View>
         <Text className="text-gray-700 text-xs mt-1">Personal AI job search engine</Text>
-      </View>
+      </Pressable>
+
+      {/* ── Developer Tools (hidden behind 5-tap) ─────────── */}
+      {devMode && collectionStatus && (
+        <>
+          <View className="mt-8" />
+          <SectionHeader title="Developer Tools" />
+          <View className="bg-gray-900 rounded-xl border border-yellow-900 overflow-hidden mb-3">
+            <View className="px-4 py-3 border-b border-gray-800">
+              <Text className="text-yellow-500 text-xs font-semibold mb-2">Collection Status</Text>
+              <View className="flex-row justify-between mb-1">
+                <Text className="text-gray-500 text-xs">Boards total</Text>
+                <Text className="text-gray-300 text-xs">{collectionStatus.boards_total}</Text>
+              </View>
+              <View className="flex-row justify-between mb-1">
+                <Text className="text-gray-500 text-xs">Fresh (≤3d)</Text>
+                <Text className="text-emerald-400 text-xs">{collectionStatus.boards_fresh}</Text>
+              </View>
+              <View className="flex-row justify-between mb-1">
+                <Text className="text-gray-500 text-xs">Collected 24h</Text>
+                <Text className="text-indigo-400 text-xs">{collectionStatus.boards_collected_24h}</Text>
+              </View>
+              <View className="flex-row justify-between">
+                <Text className="text-gray-500 text-xs">Blocklisted</Text>
+                <Text className="text-red-400 text-xs">{collectionStatus.boards_blocklisted}</Text>
+              </View>
+            </View>
+            <View className="px-4 py-3 border-b border-gray-800">
+              <View className="flex-row justify-between mb-1">
+                <Text className="text-gray-500 text-xs">Scheduler status</Text>
+                <Text className="text-gray-300 text-xs">{collectionStatus.status}</Text>
+              </View>
+              <View className="flex-row justify-between">
+                <Text className="text-gray-500 text-xs">Next run</Text>
+                <Text className="text-gray-300 text-xs">{formatTimeUntil(collectionStatus.next_run_at)}</Text>
+              </View>
+            </View>
+            <Pressable
+              className="px-4 py-3.5 active:opacity-75"
+              onPress={() => {
+                queryClient.invalidateQueries({ queryKey: ['collection-status'] })
+                queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+                Alert.alert('Refreshed', 'Status data reloaded.')
+              }}
+            >
+              <Text className="text-yellow-500 text-sm font-medium">Refresh Status Data</Text>
+            </Pressable>
+          </View>
+          <Pressable
+            className="bg-gray-900 rounded-xl border border-yellow-900 px-4 py-3.5 mb-3 active:opacity-75"
+            onPress={() => {
+              Alert.alert(
+                'Disable Dev Mode',
+                'Hide developer tools?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Disable', style: 'destructive', onPress: () => setDevMode(false) },
+                ]
+              )
+            }}
+          >
+            <Text className="text-red-400 text-sm font-medium">Disable Developer Mode</Text>
+          </Pressable>
+        </>
+      )}
 
       <View className="h-8" />
     </ScrollView>

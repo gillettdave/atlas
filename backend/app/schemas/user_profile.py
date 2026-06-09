@@ -210,6 +210,25 @@ class PromoteSuggestedKeywordsOut(BaseModel):
     reason_skipped: Optional[str] = None
 
 
+class ProfileFromTemplateRequest(BaseModel):
+    """POST /profiles/from-template"""
+    template_slug: str = Field(..., description="One of the built-in template slugs")
+    preferred_remote: Optional[Literal["remote", "hybrid", "onsite"]] = Field(
+        default=None,
+        description="Override the template's default remote preference",
+    )
+
+
+class TemplateInfo(BaseModel):
+    slug: str
+    display_name: str
+    description: str
+
+
+class TemplateListResponse(BaseModel):
+    templates: list[TemplateInfo]
+
+
 class ProfileScoreTestResponse(BaseModel):
     """Result of scoring a single job against a profile (dry run)."""
     profile_slug: str

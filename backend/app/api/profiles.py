@@ -15,10 +15,13 @@ from ..schemas.learning import (
     LearningReportOut,
 )
 from ..schemas.user_profile import (
+    ProfileFromTemplateRequest,
     ProfileScoreTestResponse,
     PromoteSuggestedKeywordsOut,
     PromoteSuggestedKeywordsRequest,
     RankerTextSignalsRebuildOut,
+    TemplateInfo,
+    TemplateListResponse,
     UserProfileCreate,
     UserProfileListResponse,
     UserProfileOut,
@@ -72,6 +75,40 @@ def create_profile(payload: UserProfileCreate, db: DbSession) -> UserProfileOut:
             min_score_threshold=payload.min_score_threshold,
             is_default=payload.is_default,
             is_active=payload.is_active,
+        )
+    except profiles_svc.ProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return UserProfileOut.model_validate(profile)
+
+
+@router.get(
+    "/templates",
+    response_model=TemplateListResponse,
+    summary="List available onboarding templates.",
+)
+def list_templates() -> TemplateListResponse:
+    return TemplateListResponse(
+        templates=[
+            TemplateInfo(slug=slug, display_name=tmpl["display_name"], description=tmpl["description"])
+            for slug, tmpl in profiles_svc._TEMPLATES.items()
+        ]
+    )
+
+
+@router.post(
+    "/from-template",
+    response_model=UserProfileOut,
+    status_code=201,
+    summary="Create (or activate) a scoring profile from a built-in onboarding template.",
+)
+def create_profile_from_template(
+    payload: ProfileFromTemplateRequest, db: DbSession
+) -> UserProfileOut:
+    try:
+        profile = profiles_svc.create_profile_from_template(
+            db,
+            template_slug=payload.template_slug,
+            preferred_remote=payload.preferred_remote,
         )
     except profiles_svc.ProfileError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

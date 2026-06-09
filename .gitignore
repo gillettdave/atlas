@@ -55,6 +55,23 @@ yarn-error.*
 *.sqlite3
 
 # =============================================================================
+# USB install — generated files (credentials + DB dump, never commit)
+# =============================================================================
+usb-install/atlas.bundle
+usb-install/atlas.dump
+usb-install/backend.env
+usb-install/
+
+# DB dumps
+*.dump
+atlas.dump
+
+# Greenhouse collection progress files (local state, not source)
+backend/scripts/greenhouse_done_slugs.txt
+backend/scripts/greenhouse_remaining.csv
+backend/scripts/test_done.txt
+
+# =============================================================================
 # Legacy test/run output directories (old pipeline runs, not source code)
 # =============================================================================
 jobs_collection/
@@ -172,7 +189,6 @@ Startup Proceedure.txt
 company_urls.txt
 company_urls_from_job_sites.txt
 digest.csv
-requirements.txt
 requirements1.txt
 package-lock.json
 ats_pipeline/

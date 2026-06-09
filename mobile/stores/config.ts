@@ -11,6 +11,7 @@ interface ConfigState {
   activeProfileSlug: string | null
   onboardingDismissed: boolean
   feedLocationMode: FeedLocationMode
+  devMode: boolean
   setApiBase: (url: string) => void
   setAdminToken: (token: string) => void
   setActiveProfileId: (id: number | null) => void
@@ -18,6 +19,7 @@ interface ConfigState {
   setActiveProfile: (id: number | null, slug: string | null) => void
   setOnboardingDismissed: (dismissed: boolean) => void
   setFeedLocationMode: (mode: FeedLocationMode) => void
+  setDevMode: (enabled: boolean) => void
 }
 
 export const useConfigStore = create<ConfigState>()(
@@ -29,6 +31,7 @@ export const useConfigStore = create<ConfigState>()(
       activeProfileSlug: null,
       onboardingDismissed: false,
       feedLocationMode: 'remote' as FeedLocationMode,
+      devMode: false,
       setApiBase: (url) => set({ apiBase: url }),
       setAdminToken: (token) => set({ adminToken: token }),
       setActiveProfileId: (id) => set({ activeProfileId: id }),
@@ -36,6 +39,7 @@ export const useConfigStore = create<ConfigState>()(
       setActiveProfile: (id, slug) => set({ activeProfileId: id, activeProfileSlug: slug }),
       setOnboardingDismissed: (dismissed) => set({ onboardingDismissed: dismissed }),
       setFeedLocationMode: (mode) => set({ feedLocationMode: mode }),
+      setDevMode: (enabled) => set({ devMode: enabled }),
     }),
     {
       name: 'atlas-config',

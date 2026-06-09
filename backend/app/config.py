@@ -731,6 +731,46 @@ class Settings(BaseSettings):
         description="Polite delay between Himalayas page requests.",
     )
 
+    # --- ATS board freshness (skip-if-fresh) ----------------------------------
+    ats_board_freshness_days: int = Field(
+        default=3,
+        ge=1,
+        le=30,
+        description=(
+            "ATS boards (greenhouse/lever/ashby) collected within this many days are skipped "
+            "on the next pipeline run. Universal aggregators (RemoteOK, JSearch, etc.) always run. "
+            "Set to 1 to collect all boards daily; 3 = collect each board every 3 days (default)."
+        ),
+    )
+    ats_board_freshness_enabled: bool = Field(
+        default=True,
+        description="Enable skip-if-fresh logic for ATS boards. Disable to always collect all boards.",
+    )
+    ats_board_max_consecutive_timeouts: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Boards that timeout this many runs in a row are auto-blocklisted (skipped indefinitely).",
+    )
+
+    # --- Server-side collection schedule -------------------------------------
+    collection_enabled: bool = Field(
+        default=False,
+        description="Enable server-side automatic daily collection (replaces user-configurable CollectorSchedule).",
+    )
+    collection_hour_utc: int = Field(
+        default=6,
+        ge=0,
+        le=23,
+        description="Hour (UTC) at which the server-side daily collection runs.",
+    )
+    collection_minute_utc: int = Field(
+        default=0,
+        ge=0,
+        le=59,
+        description="Minute (UTC) at which the server-side daily collection runs.",
+    )
+
     # --- ATS board discovery -------------------------------------------------
     serpapi_key: str | None = Field(
         default=None,
