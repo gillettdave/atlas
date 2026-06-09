@@ -90,7 +90,7 @@ _WEB3_STRONG_PHRASES: set[str] = {
     "governance token", "de-fi",
     "on-chain", "on chain",
     "move lang",
-    "protocol engineer", "protocol research", "protocol researcher",
+    "protocol research", "protocol researcher",
 }
 
 # Weaker signals — adjacent domains, lower weight.
@@ -104,6 +104,7 @@ _WEB3_WEAK_WORDS: set[str] = {
 _WEB3_WEAK_PHRASES: set[str] = {
     "hedge fund", "market maker", "market making", "market-making",
     "algorithmic trading", "algo trading",
+    "protocol engineer",  # ambiguous — only weak signal without other web3 context
 }
 
 
