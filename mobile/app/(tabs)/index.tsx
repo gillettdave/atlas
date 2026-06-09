@@ -916,8 +916,11 @@ export default function FeedScreen() {
     // Fire-and-forget — don't await, so the user can tab away freely.
     // The server runs the full pipeline; pull-to-refresh when done.
     api.findJobs()
-      .then((result) => {
+      .then(async (result) => {
+        // Rebuild digest so new jobs appear in feed immediately
+        await api.generateDigest().catch(() => {})
         queryClient.invalidateQueries({ queryKey: ['digests'] })
+        queryClient.invalidateQueries({ queryKey: ['digest'] })
         queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
         const msg = result.new_jobs > 0
           ? `Found ${result.new_jobs} new job${result.new_jobs === 1 ? '' : 's'} in ${Math.round(result.duration_sec)}s`
