@@ -210,12 +210,13 @@ export default function OnboardingScreen() {
       const profile = await api.createProfileFromTemplate(selectedRole, remotePref)
       setActiveProfile(profile.id as any, profile.slug)
 
-      setStatusText('Finding your jobs…')
-      await api.findJobs()
-
-      setStatusText('Building your feed…')
+      // Mark onboarding done and navigate immediately — don't block on findJobs.
+      // The search runs in the background; user sees the feed right away.
       setOnboardingDismissed(true)
       router.replace('/(tabs)')
+
+      // Fire-and-forget — errors are silently swallowed since user is already in the app
+      api.findJobs().catch(() => {})
     } catch (err: any) {
       setLoading(false)
       Alert.alert(
