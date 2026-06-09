@@ -39,6 +39,27 @@ export default function PipelineScreen() {
     onError: (e: Error) => Alert.alert('Error', e.message),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (trackId: string) => api.deleteTrack(trackId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['job-tracks'] }),
+    onError: (e: Error) => Alert.alert('Error', e.message),
+  })
+
+  function promptDelete(track: ApplicationJobTrack) {
+    Alert.alert(
+      'Remove from pipeline?',
+      `${track.job_title ?? 'This job'} will be removed. You can re-add it from the feed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => deleteMutation.mutate(track.id),
+        },
+      ]
+    )
+  }
+
   function promptStageChange(track: ApplicationJobTrack) {
     const current = track.current_stage?.toLowerCase() ?? 'saved'
     Alert.alert(
@@ -155,6 +176,16 @@ export default function PipelineScreen() {
                   onPress={() => router.push(`/application/${track.canonical_job_id}`)}
                 >
                   <Text className="text-gray-500 text-xs">📝 Package</Text>
+                </Pressable>
+
+                <View className="w-px bg-gray-800" />
+
+                {/* Remove from pipeline */}
+                <Pressable
+                  className="px-4 items-center justify-center py-2.5 active:opacity-75"
+                  onPress={() => promptDelete(track)}
+                >
+                  <Text className="text-red-800 text-xs">🗑</Text>
                 </Pressable>
               </View>
             </View>

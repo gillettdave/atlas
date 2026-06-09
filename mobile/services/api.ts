@@ -142,6 +142,9 @@ export const api = {
       body: JSON.stringify({ current_stage: stage }),
     }),
 
+  deleteTrack: (trackId: string) =>
+    request<void>(`/applications/job-tracks/${trackId}`, { method: 'DELETE' }),
+
   /** Accepts URL or raw JD text */
   intakeJob: (payload: { url?: string; text?: string }) =>
     request<{ job_id: number }>('/applications/jobs/intake', {
