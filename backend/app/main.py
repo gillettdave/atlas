@@ -102,6 +102,70 @@ async def _collector_scheduler_loop(stop_event: asyncio.Event) -> None:
     logger.info("collector scheduler loop stopped")
 
 
+async def _daily_collection_loop(stop_event: asyncio.Event) -> None:
+    """Server-side fixed daily collection loop.
+
+    Fires once per day at ATLAS_COLLECTION_HOUR_UTC:ATLAS_COLLECTION_MINUTE_UTC (UTC).
+    Replaces the user-configurable CollectorSchedule for the primary collection run.
+    ATS boards are subject to skip-if-fresh logic (ATLAS_ATS_BOARD_FRESHNESS_DAYS).
+    Universal aggregators always run.
+    """
+    import datetime as _dt
+    from pathlib import Path
+    from .services import collector_pipeline as _cp
+
+    hour = int(_settings.collection_hour_utc)
+    minute = int(_settings.collection_minute_utc)
+    logger.info("daily collection loop: fires daily at %02d:%02d UTC", hour, minute)
+
+    def _seconds_until_next_run() -> float:
+        now = _dt.datetime.now(_dt.timezone.utc)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += _dt.timedelta(days=1)
+        return (target - now).total_seconds()
+
+    def _run_collection() -> None:
+        csv_path = Path(__file__).resolve().parent.parent / "scripts" / "company_ats_sources.csv"
+        logger.info("daily collection starting (freshness=%dd)", _settings.ats_board_freshness_days)
+        result = _cp.run_collector_pipeline(
+            input_csv=csv_path if csv_path.exists() else None,
+            then_import=True,
+            then_rank=True,
+            rank_only_unscored=True,
+            then_digest=False,  # digest is per-user, not global
+            progress_log=True,
+        )
+        logger.info(
+            "daily collection done: ok=%s records=%s new_jobs=%s duration=%.0fs",
+            result.ok, result.records_inserted, result.new_canonical, result.duration_sec,
+        )
+
+    # Wait until the first scheduled time before entering the loop
+    wait = _seconds_until_next_run()
+    logger.info("daily collection: first run in %.0f minutes", wait / 60)
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=wait)
+    except asyncio.TimeoutError:
+        pass
+
+    while not stop_event.is_set():
+        try:
+            await asyncio.to_thread(_run_collection)
+        except Exception:  # noqa: BLE001
+            logger.exception("daily collection run failed")
+
+        # Wait until next scheduled time
+        wait = _seconds_until_next_run()
+        logger.info("daily collection: next run in %.0f minutes", wait / 60)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait)
+        except asyncio.TimeoutError:
+            continue
+
+    logger.info("daily collection loop stopped")
+
+
 async def _intake_scheduler_loop(stop_event: asyncio.Event) -> None:
     """Periodically run due discovery seeds + due email IMAP syncs (E3)."""
     interval = max(int(_settings.intake_scheduler_interval_seconds), 60)
@@ -173,6 +237,17 @@ async def lifespan(app: FastAPI):
             "ATLAS_COLLECTOR_SCHEDULER_ENABLED=true to enable)"
         )
 
+    stop_col = asyncio.Event()
+    task_col: asyncio.Task | None = None
+    if _settings.collection_enabled:
+        task_col = asyncio.create_task(
+            _daily_collection_loop(stop_col), name="atlas-daily-collection-loop"
+        )
+    else:
+        logger.info(
+            "daily collection disabled (set ATLAS_COLLECTION_ENABLED=true to enable)"
+        )
+
     stop_i = asyncio.Event()
     task_i: asyncio.Task | None = None
     if _settings.intake_scheduler_enabled:
@@ -199,6 +274,12 @@ async def lifespan(app: FastAPI):
                 await asyncio.wait_for(task_c, timeout=5.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 task_c.cancel()
+        if task_col is not None:
+            stop_col.set()
+            try:
+                await asyncio.wait_for(task_col, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task_col.cancel()
         if task_i is not None:
             stop_i.set()
             try:

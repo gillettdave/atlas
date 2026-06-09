@@ -264,7 +264,38 @@ def collect_lever(board_url: str, company_name: str, source_url: str) -> tuple[l
     return records, ""
 
 
+def _greenhouse_known_apply_urls(slug: str) -> set[str]:
+    """Return the set of apply_urls already in the DB for this Greenhouse board.
+
+    Used by list-first collection to skip description fetches for known jobs.
+    Falls back to empty set on any DB error (safe — just fetches all descriptions).
+    """
+    try:
+        from ..db import SessionLocal
+        from ..models.job import Job
+        prefix = f"https://boards.greenhouse.io/{slug}/"
+        prefix2 = f"https://job-boards.greenhouse.io/{slug}/"
+        with SessionLocal() as db:
+            urls = db.query(Job.apply_url).filter(
+                Job.is_active.is_(True),
+                Job.apply_url.like(f"%greenhouse.io/{slug}/%"),
+            ).all()
+            return {u[0] for u in urls if u[0]}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tuple[list[RawCollectedRecord], str]:
+    """Collect open jobs from a Greenhouse board.
+
+    List-first approach:
+    1. Fetch the job list (1 request — IDs, titles, locations).
+    2. Check which job apply_urls are already in the DB.
+    3. Fetch descriptions only for genuinely new jobs.
+
+    This drastically reduces API calls on repeat daily collections where most
+    jobs already exist in the DB.
+    """
     p = urlparse(board_url)
     host = p.netloc.lower()
     parts = [x for x in p.path.strip("/").split("/") if x]
@@ -283,25 +314,33 @@ def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tu
         data_o, gh_tag = json_from_get(
             f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
             headers=_PUBLIC_UA_HEADERS,
-            timeout=(10, 30),  # 10s connect, 30s read — hard cap per board
+            timeout=(10, 30),
         )
         data = data_o if isinstance(data_o, dict) else {}
         if gh_tag:
             return [], f"greenhouse_api:{gh_tag}"
-        _DESC_FETCH_LIMIT = 60  # max descriptions per board (~30s) — backfill script handles the rest
+
+        # List-first: find which apply_urls we already have
+        known_urls = _greenhouse_known_apply_urls(slug)
         _desc_fetched = 0
+        _DESC_FETCH_LIMIT = 200  # generous cap — only new jobs hit this
+
         for item in data.get("jobs", []):
             title = (item.get("title") or "").strip()
             if _bad_title(title):
                 continue
             loc = (item.get("location") or {})
             job_id = str(item.get("id")) if item.get("id") is not None else None
-            # Fetch full description from detail endpoint (rate-limited)
+            apply_url = (item.get("absolute_url") or "").strip()
+
+            # Only fetch description if this job isn't already in the DB
             description: Optional[str] = None
-            if slug and job_id and _desc_fetched < _DESC_FETCH_LIMIT:
+            is_new = apply_url not in known_urls
+            if is_new and slug and job_id and _desc_fetched < _DESC_FETCH_LIMIT:
                 description = _fetch_greenhouse_description(slug, job_id)
                 _desc_fetched += 1
-                time.sleep(0.5)  # 2 req/s max to avoid bans
+                time.sleep(0.3)  # polite rate limiting
+
             records.append(RawCollectedRecord(
                 provider="greenhouse",
                 source_url=source_url or board_url,
@@ -310,7 +349,7 @@ def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tu
                     "source_type": "ats_board",
                     "ats_type": "greenhouse",
                     "job_title": title,
-                    "job_url": (item.get("absolute_url") or "").strip(),
+                    "job_url": apply_url,
                     "external_job_id": job_id,
                     "location": (loc.get("name") or "").strip(),
                     "department": ", ".join(
@@ -320,6 +359,7 @@ def collect_greenhouse(board_url: str, company_name: str, source_url: str) -> tu
                     "collected_at": now_iso(),
                     "description": description,
                     "native_api_item": item,
+                    "is_new": is_new,
                 },
             ))
         return records, ""
@@ -1141,19 +1181,104 @@ async def _collect_one_source(browser, row: SourceRow) -> tuple[list[RawCollecte
     return [], "no_source_url"
 
 
+# ATS board types subject to skip-if-fresh / blocklist logic.
+# Universal aggregators (remoteok, jsearch, etc.) are always collected.
+_FRESHNESS_CHECKED_TYPES = frozenset({"greenhouse", "lever", "ashby"})
+
+import logging as _logging
+_ats_log = _logging.getLogger("atlas.collector")
+
+
+def _board_log_upsert(board_url: str, ats_type: str, company_name: str,
+                      records: int, timed_out: bool) -> None:
+    """Update board_collection_log after collecting a board. Fire-and-forget."""
+    try:
+        from datetime import datetime, timezone
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from ..db import SessionLocal
+        from ..models.board_collection_log import BoardCollectionLog
+
+        now = datetime.now(timezone.utc)
+        with SessionLocal() as db:
+            existing = db.query(BoardCollectionLog).filter_by(
+                ats_board_url=board_url
+            ).first()
+            if existing is None:
+                existing = BoardCollectionLog(
+                    ats_board_url=board_url,
+                    ats_type=ats_type,
+                    company_name=company_name,
+                )
+                db.add(existing)
+
+            existing.ats_type = ats_type
+            existing.company_name = company_name
+            existing.total_runs = (existing.total_runs or 0) + 1
+            existing.total_records = (existing.total_records or 0) + records
+
+            if timed_out:
+                existing.consecutive_timeouts = (existing.consecutive_timeouts or 0) + 1
+                existing.last_timeout_at = now
+            else:
+                existing.consecutive_timeouts = 0
+                existing.last_collected_at = now
+
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        _ats_log.warning("board_collection_log upsert failed for %s: %s", board_url, exc)
+
+
+def _board_is_skippable(board_url: str, freshness_days: int, max_timeouts: int) -> str | None:
+    """Return a skip reason string if board should be skipped, else None."""
+    try:
+        from ..db import SessionLocal
+        from ..models.board_collection_log import BoardCollectionLog
+
+        with SessionLocal() as db:
+            entry = db.query(BoardCollectionLog).filter_by(
+                ats_board_url=board_url
+            ).first()
+            if entry is None:
+                return None
+            if entry.is_blocklisted(max_timeouts):
+                return f"blocklisted({entry.consecutive_timeouts}_timeouts)"
+            if entry.is_fresh(freshness_days):
+                return f"fresh(collected_{freshness_days}d_window)"
+    except Exception as exc:  # noqa: BLE001
+        _ats_log.warning("board_collection_log freshness check failed for %s: %s", board_url, exc)
+    return None
+
+
 async def collect_all(
     sources: list[SourceRow],
     *,
     headless: bool = True,
     progress_cb: Any = None,
+    freshness_enabled: bool | None = None,
+    freshness_days: int | None = None,
+    max_consecutive_timeouts: int | None = None,
 ) -> AsyncIterator[tuple[SourceRow, list[RawCollectedRecord], str]]:
     """Async generator yielding one tuple per source:
         (source_row, records, error_reason)
+
+    For ATS board types (greenhouse/lever/ashby), boards collected within
+    ``freshness_days`` are skipped and boards that have timed out
+    ``max_consecutive_timeouts`` times in a row are blocklisted.
+
+    Universal aggregators (RemoteOK, JSearch, etc.) always run.
 
     Playwright is imported lazily so importing this module in API-only
     environments doesn't require a browser install.
     """
     from playwright.async_api import async_playwright
+
+    settings = get_settings()
+    if freshness_enabled is None:
+        freshness_enabled = settings.ats_board_freshness_enabled
+    if freshness_days is None:
+        freshness_days = settings.ats_board_freshness_days
+    if max_consecutive_timeouts is None:
+        max_consecutive_timeouts = settings.ats_board_max_consecutive_timeouts
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
@@ -1161,8 +1286,31 @@ async def collect_all(
             for idx, row in enumerate(sources, start=1):
                 if progress_cb is not None:
                     progress_cb(idx, len(sources), row)
+
+                # --- skip-if-fresh / blocklist check for ATS boards ----------
+                if (
+                    freshness_enabled
+                    and row.ats_type in _FRESHNESS_CHECKED_TYPES
+                    and row.ats_board_url
+                ):
+                    skip_reason = _board_is_skippable(
+                        row.ats_board_url, freshness_days, max_consecutive_timeouts
+                    )
+                    if skip_reason:
+                        yield row, [], f"skipped:{skip_reason}"
+                        continue
+
                 try:
                     records, reason = await _collect_one_source(browser, row)
+
+                    # --- update freshness log for ATS board types ------------
+                    if row.ats_type in _FRESHNESS_CHECKED_TYPES and row.ats_board_url:
+                        timed_out = "timeout" in (reason or "").lower()
+                        _board_log_upsert(
+                            row.ats_board_url, row.ats_type or "",
+                            row.company_name or "", len(records), timed_out,
+                        )
+
                     yield row, records, reason
                 except Exception as e:  # noqa: BLE001
                     yield row, [], f"error:{type(e).__name__}:{str(e)[:200]}"

@@ -329,6 +329,20 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // ── Collection Status ────────────────────────────────────────────────────────
+
+  getCollectionStatus: () =>
+    request<{
+      last_collected_at: string | null
+      next_run_at: string | null
+      total_active_jobs: number
+      boards_collected_24h: number
+      boards_fresh: number
+      boards_blocklisted: number
+      boards_total: number
+      status: string
+    }>('/collection/status'),
+
   // ── Rescore ──────────────────────────────────────────────────────────────────
 
   rescoreJobs: (opts: { onlyUnscored?: boolean } = {}) =>

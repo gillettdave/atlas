@@ -9,6 +9,7 @@ from . import (
     auth,
     candidate_profile,
     career_memory,
+    collection_status,
     collector_schedules,
     collectors,
     digests,
@@ -53,6 +54,7 @@ api_router.include_router(
     qualification.router, prefix="/qualification", tags=["qualification"]
 )
 api_router.include_router(candidate_profile.router)
+api_router.include_router(collection_status.router)
 api_router.include_router(discovery.router)
 api_router.include_router(email_intake_route.router)
 
