@@ -21,14 +21,17 @@ function OnboardingGate() {
   const { onboardingDismissed, activeProfileId } = useConfigStore()
 
   useEffect(() => {
-    const inOnboarding = (segments[0] as string) === 'onboarding'
-    const needsOnboarding = !onboardingDismissed && !activeProfileId
+    const timer = setTimeout(() => {
+      const inOnboarding = (segments[0] as string) === 'onboarding'
+      const needsOnboarding = !onboardingDismissed && !activeProfileId
 
-    if (needsOnboarding && !inOnboarding) {
-      router.replace('/onboarding' as any)
-    } else if (!needsOnboarding && inOnboarding) {
-      router.replace('/(tabs)')
-    }
+      if (needsOnboarding && !inOnboarding) {
+        router.replace('/onboarding' as any)
+      } else if (!needsOnboarding && inOnboarding) {
+        router.replace('/(tabs)')
+      }
+    }, 100)
+    return () => clearTimeout(timer)
   }, [onboardingDismissed, activeProfileId, segments])
 
   return null
