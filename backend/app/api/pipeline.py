@@ -7,6 +7,7 @@ Read-only rollups intended to power the admin UI's Home page:
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -215,37 +216,40 @@ class FindJobsResult(BaseModel):
     dependencies=[Depends(require_admin_token)],
     summary=(
         "1-click: collect from all enabled sources → import → rank → digest. "
-        "Returns immediately with results. Runs synchronously (may take 30–120s)."
+        "Returns immediately (202) and runs the pipeline in a background thread. "
+        "Poll GET /pipeline/status to check progress."
     ),
+    status_code=202,
 )
-def find_jobs(db: DbSession) -> FindJobsResult:
-    """Trigger a full collect+import+rank+digest cycle with zero configuration.
+def find_jobs() -> FindJobsResult:
+    """Trigger a full collect+import+rank+digest cycle in a background thread.
 
-    Uses all enabled aggregators (RemoteOK, We Work Remotely) plus any per-company
-    sources configured in ingestion_sources. Generates a 'daily' digest automatically.
+    Returns immediately with ok=True so the mobile client isn't blocked.
+    The pipeline runs server-side; poll /pipeline/status for completion.
     """
+    if capline.is_running():
+        return FindJobsResult(ok=True, new_jobs=0, duration_sec=0.0, error="already_running")
+
     s = get_settings()
     capline.clear_cancel()
-    res = capline.run_collector_pipeline(
-        input_csv=None,
-        sources=None,
-        then_import=True,
-        then_rank=True,
-        then_digest=s.find_jobs_then_digest,
-        digest_type="daily",
-        digest_fresh_hours=s.find_jobs_digest_fresh_hours,
-        digest_fresh_limit=20,
-        digest_gem_limit=10,
-        source_name="find_jobs",
-        source_type="aggregator",
-    )
-    return FindJobsResult(
-        ok=res.ok,
-        new_jobs=res.new_canonical or 0,
-        duration_sec=res.duration_sec or 0.0,
-        digest_id=str(res.digest_id) if res.digest_id else None,
-        error=res.error,
-    )
+
+    def _run() -> None:
+        capline.run_collector_pipeline(
+            input_csv=None,
+            sources=None,
+            then_import=True,
+            then_rank=True,
+            then_digest=s.find_jobs_then_digest,
+            digest_type="daily",
+            digest_fresh_hours=s.find_jobs_digest_fresh_hours,
+            digest_fresh_limit=20,
+            digest_gem_limit=10,
+            source_name="find_jobs",
+            source_type="aggregator",
+        )
+
+    threading.Thread(target=_run, daemon=True, name="find-jobs-pipeline").start()
+    return FindJobsResult(ok=True, new_jobs=0, duration_sec=0.0, error=None)
 
 
 class PipelineStatusResult(BaseModel):

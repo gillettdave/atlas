@@ -248,6 +248,9 @@ export const api = {
   findJobs: () =>
     request<FindJobsResult>('/pipeline/find-jobs', { method: 'POST' }),
 
+  getPipelineStatus: () =>
+    request<{ running: boolean; cancel_requested: boolean }>('/pipeline/status'),
+
   cancelPipeline: () =>
     request<{ ok: boolean; message: string }>('/pipeline/cancel', { method: 'POST' }),
 

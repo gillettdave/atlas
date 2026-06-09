@@ -915,22 +915,31 @@ export default function FeedScreen() {
     setSearching(true)
     // Fire-and-forget — don't await, so the user can tab away freely.
     // The server runs the full pipeline; pull-to-refresh when done.
+    // POST returns immediately (202) — pipeline runs on server in background thread
     api.findJobs()
-      .then(async (result) => {
-        // Rebuild digest so new jobs appear in feed immediately
-        await api.generateDigest().catch(() => {})
-        queryClient.invalidateQueries({ queryKey: ['digests'] })
-        queryClient.invalidateQueries({ queryKey: ['digest'] })
-        queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
-        const msg = result.new_jobs > 0
-          ? `Found ${result.new_jobs} new job${result.new_jobs === 1 ? '' : 's'} in ${Math.round(result.duration_sec)}s`
-          : 'No new jobs found this time.'
-        Alert.alert('Search complete', msg)
+      .then(() => {
+        // Poll /pipeline/status every 15s until the server reports not running
+        const poll = setInterval(async () => {
+          try {
+            const status = await api.getPipelineStatus()
+            if (!status.running) {
+              clearInterval(poll)
+              setSearching(false)
+              await api.generateDigest().catch(() => {})
+              queryClient.invalidateQueries({ queryKey: ['digests'] })
+              queryClient.invalidateQueries({ queryKey: ['digest'] })
+              queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
+              Alert.alert('Search complete', 'Your feed has been updated.')
+            }
+          } catch {
+            // network blip during poll — keep trying
+          }
+        }, 15000)
       })
       .catch((e: Error) => {
+        setSearching(false)
         Alert.alert('Find Jobs failed', e.message)
       })
-      .finally(() => setSearching(false))
   }
 
   async function handleStopAndDigest() {
