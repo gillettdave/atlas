@@ -13,6 +13,7 @@ import {
   Switch,
   Platform,
   Alert,
+  AppState,
 } from 'react-native'
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -895,6 +896,19 @@ export default function FeedScreen() {
   const homeCity = candidateProfile?.home_city ?? ''
 
   const [searching, setSearching] = useState(false)
+
+  // Auto-refresh digest when the app comes back to the foreground (e.g. morning after nightly collection)
+  const appStateRef = useRef(AppState.currentState)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (appStateRef.current.match(/inactive|background/) && nextState === 'active') {
+        queryClient.invalidateQueries({ queryKey: ['digests'] })
+        queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
+      }
+      appStateRef.current = nextState
+    })
+    return () => sub.remove()
+  }, [queryClient])
 
   async function handleFindJobs() {
     if (searching) return
