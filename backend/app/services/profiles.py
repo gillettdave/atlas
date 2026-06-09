@@ -31,6 +31,192 @@ class ProfileError(Exception):
     """Raised on invalid profile operations (business-rule violations)."""
 
 
+# ---------------------------------------------------------------------------
+# Onboarding templates
+# ---------------------------------------------------------------------------
+
+_TEMPLATES: dict[str, dict] = {
+    "community_manager": {
+        "display_name": "Community Manager",
+        "description": "Community management, engagement, and ecosystem growth roles.",
+        "strong_keywords": [
+            "community", "discord", "telegram", "ecosystem", "ambassador",
+            "events", "engagement", "forum", "moderation", "community manager",
+            "community lead", "community growth", "online community",
+        ],
+        "weak_keywords": [
+            "social media", "content", "partnerships", "brand", "advocacy",
+            "user research", "feedback", "onboarding", "retention",
+        ],
+        "negative_keywords": ["rust", "solidity", "smart contract", "kernel", "firmware"],
+        "preferred_remote": "remote",
+        "weights": {"web3_fit": 1.2, "description_fit": 1.3, "freshness": 1.1},
+    },
+    "devrel": {
+        "display_name": "Developer Relations",
+        "description": "Developer advocacy, technical writing, and SDK/docs roles.",
+        "strong_keywords": [
+            "developer relations", "devrel", "developer advocate", "advocacy",
+            "technical writing", "sdk", "api docs", "documentation", "hackathon",
+            "developer experience", "dx", "developer community", "open source",
+        ],
+        "weak_keywords": [
+            "community", "content", "tutorials", "blog", "webinar",
+            "demos", "integrations", "technical marketing",
+        ],
+        "negative_keywords": ["firmware", "kernel", "embedded", "FPGA"],
+        "preferred_remote": "remote",
+        "weights": {"web3_fit": 1.3, "description_fit": 1.4, "freshness": 1.1},
+    },
+    "growth": {
+        "display_name": "Growth",
+        "description": "Growth marketing, acquisition, and retention roles.",
+        "strong_keywords": [
+            "growth", "acquisition", "funnel", "seo", "paid", "conversion",
+            "retention", "a/b testing", "growth hacking", "user acquisition",
+            "performance marketing", "growth marketing", "gtm",
+        ],
+        "weak_keywords": [
+            "analytics", "data", "marketing", "product", "partnerships",
+            "lifecycle", "email marketing", "referral",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.3, "freshness": 1.2},
+    },
+    "marketing_manager": {
+        "display_name": "Marketing Manager",
+        "description": "Brand, campaigns, content, and communications roles.",
+        "strong_keywords": [
+            "marketing", "brand", "campaigns", "content", "social media",
+            "communications", "pr", "public relations", "marketing manager",
+            "content marketing", "brand manager", "storytelling",
+        ],
+        "weak_keywords": [
+            "seo", "email", "events", "partnerships", "copywriting",
+            "creative", "design", "social", "digital marketing",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.2, "freshness": 1.1},
+    },
+    "customer_success": {
+        "display_name": "Customer Success",
+        "description": "CSM, onboarding, retention, and account management roles.",
+        "strong_keywords": [
+            "customer success", "csm", "onboarding", "retention", "churn",
+            "nps", "account management", "customer success manager",
+            "client success", "renewals", "expansion", "upsell",
+        ],
+        "weak_keywords": [
+            "support", "saas", "b2b", "enterprise", "product", "training",
+            "relationship", "partnership", "satisfaction",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.3, "freshness": 1.1},
+    },
+    "operations": {
+        "display_name": "Operations",
+        "description": "Ops, process improvement, tooling, and project coordination roles.",
+        "strong_keywords": [
+            "operations", "ops", "process", "tooling", "systems",
+            "project management", "coordination", "biz ops", "business operations",
+            "strategy and ops", "chief of staff",
+        ],
+        "weak_keywords": [
+            "analytics", "reporting", "planning", "cross-functional",
+            "efficiency", "automation", "workflows", "vendor management",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.2, "freshness": 1.0},
+    },
+    "product_manager": {
+        "display_name": "Product Manager",
+        "description": "Product management, roadmap, and discovery roles.",
+        "strong_keywords": [
+            "product", "product manager", "roadmap", "prd", "discovery",
+            "user research", "stakeholder", "okr", "pm", "product lead",
+            "product owner", "product strategy", "feature prioritization",
+        ],
+        "weak_keywords": [
+            "agile", "scrum", "cross-functional", "analytics", "data",
+            "design", "ux", "go-to-market", "launch",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.3, "freshness": 1.1},
+    },
+    "sales": {
+        "display_name": "Sales",
+        "description": "Sales, BD, and revenue roles.",
+        "strong_keywords": [
+            "sales", "business development", "bd", "pipeline", "ae",
+            "account executive", "sdr", "quota", "revenue", "closing",
+            "enterprise sales", "b2b sales", "saas sales",
+        ],
+        "weak_keywords": [
+            "crm", "salesforce", "partnerships", "outbound", "inbound",
+            "prospecting", "negotiation", "demo",
+        ],
+        "negative_keywords": ["rust", "solidity", "firmware", "kernel"],
+        "preferred_remote": "remote",
+        "weights": {"description_fit": 1.2, "freshness": 1.2},
+    },
+}
+
+TEMPLATE_SLUGS = list(_TEMPLATES.keys())
+
+
+def create_profile_from_template(
+    db: Session,
+    *,
+    template_slug: str,
+    preferred_remote: str | None = None,
+    user_id: uuid.UUID | None = None,
+) -> UserProfile:
+    """Create (or return existing) a UserProfile from a named template.
+
+    Sets the new profile as the default. If a profile with the template
+    slug already exists for this user, updates preferred_remote and
+    promotes it to default instead of creating a duplicate.
+    """
+    tmpl = _TEMPLATES.get(template_slug)
+    if tmpl is None:
+        raise ProfileError(f"unknown template slug: {template_slug!r}")
+
+    remote = preferred_remote or tmpl["preferred_remote"]
+
+    owner = user_id or _tenant_user_id()
+    existing = get_by_slug(db, template_slug, uid=owner)
+    if existing is not None:
+        # Already exists — update remote pref and promote to default
+        return update_profile(
+            db,
+            existing.id,
+            preferred_remote=remote,
+            is_default=True,
+            is_active=True,
+        )
+
+    return create_profile(
+        db,
+        slug=template_slug,
+        display_name=tmpl["display_name"],
+        description=tmpl["description"],
+        weights=tmpl.get("weights", {}),
+        strong_keywords=tmpl["strong_keywords"],
+        weak_keywords=tmpl["weak_keywords"],
+        negative_keywords=tmpl["negative_keywords"],
+        preferred_remote=remote,
+        min_score_threshold=Decimal("0"),
+        is_default=True,
+        is_active=True,
+        user_id=owner,
+    )
+
+
 def _tenant_user_id() -> uuid.UUID:
     """Single seeded user until auth attaches a real tenant to requests."""
     return SEEDED_LOCAL_USER_ID
