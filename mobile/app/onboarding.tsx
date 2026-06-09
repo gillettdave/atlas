@@ -16,7 +16,6 @@ import {
 } from 'react-native'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'expo-router'
-import * as Location from 'expo-location'
 import { useConfigStore } from '../stores/config'
 import { api } from '../services/api'
 
@@ -180,55 +179,18 @@ export default function OnboardingScreen() {
 
   // ── Step 2: Location (optional) ──────────────────────────────────────────
 
-  const handleUseLocation = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location permission was not granted. You can set your location later in Profile → Info.')
-        setStep(3)
-        startCollection()
-        return
-      }
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      const [geocode] = await Location.reverseGeocodeAsync({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      })
-      if (geocode) {
-        const cityStr = [geocode.city, geocode.region].filter(Boolean).join(', ')
-        // Save to candidate profile in background — best effort
-        api.upsertCandidateProfile({
-          home_city: cityStr,
-          home_lat: loc.coords.latitude,
-          home_lng: loc.coords.longitude,
-        }).catch(() => {})
-      }
-    } catch {
-      // location failed — non-fatal, proceed
-    }
-    setStep(3)
-    startCollection()
-  }
-
   const renderLocationStep = () => (
     <View className="flex-1 justify-center">
       <Text className="text-white text-2xl font-bold mb-2">Add your location?</Text>
       <Text className="text-gray-400 text-sm mb-8">
-        Atlas can surface local and hybrid jobs near you, or you can set this later in your profile.
+        Atlas can surface local and hybrid jobs near you. You can set your location in Profile → Info after setup.
       </Text>
       <View className="gap-3">
         <Pressable
-          onPress={handleUseLocation}
-          className="bg-indigo-600 active:bg-indigo-700 py-4 rounded-xl items-center flex-row justify-center gap-2"
-        >
-          <Text className="text-lg">📍</Text>
-          <Text className="text-white font-semibold text-base">Use my location</Text>
-        </Pressable>
-        <Pressable
           onPress={() => { setStep(3); startCollection() }}
-          className="bg-gray-800 active:bg-gray-700 py-4 rounded-xl items-center"
+          className="bg-indigo-600 active:bg-indigo-700 py-4 rounded-xl items-center"
         >
-          <Text className="text-gray-300 font-semibold text-base">Skip for now</Text>
+          <Text className="text-white font-semibold text-base">Continue</Text>
         </Pressable>
         <Pressable onPress={() => setStep(1)} className="py-2 items-center">
           <Text className="text-gray-500 text-sm">← Back</Text>

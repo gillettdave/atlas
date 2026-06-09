@@ -22,13 +22,7 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
-      [
-        "expo-location",
-        {
-          "locationWhenInUsePermission": "Atlas uses your location to find jobs near you."
-        }
-      ]
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true
