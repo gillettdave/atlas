@@ -746,6 +746,25 @@ class Settings(BaseSettings):
         default=True,
         description="Enable skip-if-fresh logic for ATS boards. Disable to always collect all boards.",
     )
+    ats_board_rotation_shards: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Split ATS boards into N shards and only run today's shard (day_of_year %% N). "
+            "Set to 1 to disable rotation (run all boards every collection). "
+            "With 2298 boards and 3 shards, ~766 boards run per day."
+        ),
+    )
+    ats_board_rotation_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable shard-based daily rotation for ATS boards. "
+            "Each board is assigned a fixed shard via hash(url) %% shards. "
+            "Enable once boards > ~500 to keep daily run times reasonable."
+        ),
+    )
+
     ats_board_max_consecutive_timeouts: int = Field(
         default=5,
         ge=1,

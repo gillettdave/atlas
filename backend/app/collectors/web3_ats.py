@@ -1228,8 +1228,24 @@ def _board_log_upsert(board_url: str, ats_type: str, company_name: str,
         _ats_log.warning("board_collection_log upsert failed for %s: %s", board_url, exc)
 
 
+def _board_shard(board_url: str, n_shards: int) -> int:
+    """Deterministic shard index for a board URL: hash(url) % n_shards."""
+    return abs(hash(board_url)) % n_shards
+
+
 def _board_is_skippable(board_url: str, freshness_days: int, max_timeouts: int) -> str | None:
     """Return a skip reason string if board should be skipped, else None."""
+    import datetime
+
+    settings = get_settings()
+
+    # --- shard rotation check (runs before DB query — no I/O needed) ----------
+    if settings.ats_board_rotation_enabled and settings.ats_board_rotation_shards > 1:
+        n = settings.ats_board_rotation_shards
+        today_shard = datetime.date.today().timetuple().tm_yday % n
+        if _board_shard(board_url, n) != today_shard:
+            return f"rotation_shard(not_today)"
+
     try:
         from ..db import SessionLocal
         from ..models.board_collection_log import BoardCollectionLog

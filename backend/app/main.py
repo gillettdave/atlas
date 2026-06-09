@@ -127,7 +127,15 @@ async def _daily_collection_loop(stop_event: asyncio.Event) -> None:
 
     def _run_collection() -> None:
         csv_path = Path(__file__).resolve().parent.parent / "scripts" / "company_ats_sources.csv"
-        logger.info("daily collection starting (freshness=%dd)", _settings.ats_board_freshness_days)
+        import datetime as _datetime
+        if _settings.ats_board_rotation_enabled and _settings.ats_board_rotation_shards > 1:
+            _shard = _datetime.date.today().timetuple().tm_yday % _settings.ats_board_rotation_shards
+            logger.info(
+                "daily collection starting (freshness=%dd, rotation=shard %d/%d)",
+                _settings.ats_board_freshness_days, _shard, _settings.ats_board_rotation_shards,
+            )
+        else:
+            logger.info("daily collection starting (freshness=%dd)", _settings.ats_board_freshness_days)
         result = _cp.run_collector_pipeline(
             input_csv=csv_path if csv_path.exists() else None,
             then_import=True,
