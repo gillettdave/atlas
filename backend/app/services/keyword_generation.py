@@ -93,6 +93,15 @@ def generate_keywords_from_facts(db: Session, profile: UserProfile) -> dict:
     profile.strong_keywords = strong
     profile.weak_keywords = weak
     profile.negative_keywords = negative
+
+    # Fix scoring weights — web3_fit was over-weighted, description_fit under-weighted
+    current_weights = dict(profile.weights or {})
+    current_weights.update({
+        "web3_fit": 0.3,
+        "description_fit": 1.5,
+    })
+    profile.weights = current_weights
+
     db.commit()
 
     logger.info(
