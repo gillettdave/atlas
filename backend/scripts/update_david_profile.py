@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db import session_scope
-from app.models.profile import UserProfile
+from app.models.user_profile import UserProfile
 from sqlalchemy import select
 
 STRONG_KEYWORDS = [

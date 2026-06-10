@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models.career_memory import CareerFact
-from ..models.profile import UserProfile
+from ..models.user_profile import UserProfile
 
 logger = logging.getLogger(__name__)
 
