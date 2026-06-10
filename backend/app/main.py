@@ -126,6 +126,7 @@ async def _daily_collection_loop(stop_event: asyncio.Event) -> None:
         return (target - now).total_seconds()
 
     def _run_collection() -> None:
+        from .services import job_expiry as _expiry
         csv_path = Path(__file__).resolve().parent.parent / "scripts" / "company_ats_sources.csv"
         import datetime as _datetime
         if _settings.ats_board_rotation_enabled and _settings.ats_board_rotation_shards > 1:
@@ -148,6 +149,9 @@ async def _daily_collection_loop(stop_event: asyncio.Event) -> None:
             "daily collection done: ok=%s records=%s new_jobs=%s duration=%.0fs",
             result.ok, result.records_inserted, result.new_canonical, result.duration_sec,
         )
+        # Cull stale listings after each collection run
+        with SessionLocal() as _db:
+            _expiry.expire_stale_jobs(_db)
 
     # Wait until the first scheduled time before entering the loop
     wait = _seconds_until_next_run()

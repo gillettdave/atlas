@@ -403,4 +403,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(params ?? {}),
     }),
+
+  expireJobs: () =>
+    request<{ soft_expired_board: number; soft_expired_ats: number; hard_deleted: number; protected_from_delete: number }>(
+      '/imports/expire-jobs',
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
 }

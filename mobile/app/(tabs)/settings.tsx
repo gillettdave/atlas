@@ -66,6 +66,7 @@ export default function SettingsScreen() {
   const [rescoring, setRescoring] = useState(false)
   const [generatingKeywords, setGeneratingKeywords] = useState(false)
   const [refreshingDigest, setRefreshingDigest] = useState(false)
+  const [expiringJobs, setExpiringJobs] = useState(false)
   const [bgBanner, setBgBanner] = useState<string | null>(null)
   const versionTapCount = useRef(0)
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -513,6 +514,45 @@ export default function SettingsScreen() {
               <Text className="text-yellow-500 text-sm font-medium">Refresh Status Data</Text>
             </Pressable>
           </View>
+          <Pressable
+            className="bg-gray-900 rounded-xl border border-yellow-900 px-4 py-3.5 mb-3 active:opacity-75"
+            disabled={expiringJobs}
+            onPress={() => {
+              Alert.alert(
+                'Expire Stale Jobs',
+                'Soft-expires board jobs older than 30 days, ATS jobs older than 60 days, and hard-deletes inactive jobs older than 120 days (protected if you\'ve interacted with them).\n\nThis runs automatically after each daily collection.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Run Now',
+                    onPress: async () => {
+                      setExpiringJobs(true)
+                      try {
+                        const r = await api.expireJobs()
+                        Alert.alert(
+                          'Expiry Complete ✓',
+                          `Soft-expired: ${r.soft_expired_board} board + ${r.soft_expired_ats} ATS jobs\nHard-deleted: ${r.hard_deleted} jobs\nProtected: ${r.protected_from_delete} jobs (you applied)`
+                        )
+                        queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+                      } catch (e: unknown) {
+                        Alert.alert('Failed', e instanceof Error ? e.message : 'Unknown error')
+                      } finally {
+                        setExpiringJobs(false)
+                      }
+                    },
+                  },
+                ]
+              )
+            }}
+          >
+            <View className="flex-row items-center justify-between">
+              <Text className="text-yellow-500 text-sm font-medium">Expire Stale Jobs</Text>
+              {expiringJobs
+                ? <ActivityIndicator size="small" color="#eab308" />
+                : <Text className="text-yellow-700 text-xs">30d board / 60d ATS / 120d delete</Text>
+              }
+            </View>
+          </Pressable>
           <Pressable
             className="bg-gray-900 rounded-xl border border-yellow-900 px-4 py-3.5 mb-3 active:opacity-75"
             onPress={() => {

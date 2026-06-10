@@ -27,7 +27,7 @@ from ..schemas.ingestion import (
 )
 from ..services import manual_job_url as manual_job_svc
 from ..services import backfill as backfill_svc
-from ..services import importer, profiles as profiles_svc, ranker
+from ..services import importer, profiles as profiles_svc, ranker, job_expiry
 from ..services.collector_pipeline import resolve_input_csv_path
 from ..services import ingestion_sources_collect as ingestion_src_collect
 from ..services import ingestion_sources_list as ingestion_src_list
@@ -137,6 +137,21 @@ def rescore_async(
 ) -> dict:
     background_tasks.add_task(_bg_rescore, payload.model_dump())
     return {"status": "queued"}
+
+
+@router.post(
+    "/expire-jobs",
+    dependencies=[Depends(require_admin_token)],
+    summary="Soft-expire stale jobs and hard-delete old inactive ones with no user interaction.",
+)
+def expire_jobs(db: DbSession) -> dict:
+    stats = job_expiry.expire_stale_jobs(db)
+    return {
+        "soft_expired_board": stats.soft_expired_board,
+        "soft_expired_ats": stats.soft_expired_ats,
+        "hard_deleted": stats.hard_deleted,
+        "protected_from_delete": stats.protected_from_delete,
+    }
 
 
 @router.post(
