@@ -1105,6 +1105,8 @@ function KeywordsTab() {
       const result = await api.generateProfileKeywords(slug)
       queryClient.invalidateQueries({ queryKey: ['profile-detail', slug] })
       refetch()
+      // Re-score existing job pool so new users see results immediately
+      api.rescoreJobs({ onlyUnscored: false }).catch(() => {})
       Alert.alert(
         'Keywords Regenerated ✓',
         `From ${result.facts_used} approved facts:\n\nStrong: ${result.strong_keywords.length} · Weak: ${result.weak_keywords.length} · Negative: ${result.negative_keywords.length}`

@@ -210,13 +210,12 @@ export default function OnboardingScreen() {
       const profile = await api.createProfileFromTemplate(selectedRole, remotePref)
       setActiveProfile(profile.id as any, profile.slug)
 
-      // Mark onboarding done and navigate immediately — don't block on findJobs.
-      // The search runs in the background; user sees the feed right away.
+      // Mark onboarding done and navigate immediately
       setOnboardingDismissed(true)
       router.replace('/(tabs)')
 
-      // Fire-and-forget — errors are silently swallowed since user is already in the app
-      api.findJobs().catch(() => {})
+      // Score existing job pool against new profile — fast (seconds, not minutes)
+      api.rescoreJobs({ onlyUnscored: false }).catch(() => {})
     } catch (err: any) {
       setLoading(false)
       Alert.alert(

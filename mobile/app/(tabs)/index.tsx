@@ -840,9 +840,9 @@ function OnboardingChecklist() {
       tip: 'Profile → Facts → tap a fact → ✓ Approve',
     },
     {
-      label: 'Run Find Jobs',
+      label: 'Score your jobs',
       done: hasJobs,
-      tip: 'Tap the Find Jobs button above',
+      tip: 'Profile → Keywords → Regenerate with AI',
     },
   ]
 
@@ -895,8 +895,6 @@ export default function FeedScreen() {
   })
   const homeCity = candidateProfile?.home_city ?? ''
 
-  const [searching, setSearching] = useState(false)
-
   // Auto-refresh digest when the app comes back to the foreground (e.g. morning after nightly collection)
   const appStateRef = useRef(AppState.currentState)
   useEffect(() => {
@@ -909,47 +907,6 @@ export default function FeedScreen() {
     })
     return () => sub.remove()
   }, [queryClient])
-
-  function handleFindJobs() {
-    if (searching) return
-    setSearching(true)
-
-    // True fire-and-forget — swallow the response/error entirely.
-    // Even if iOS kills the TCP connection while backgrounded, the server
-    // already received the POST and started the pipeline.
-    api.findJobs().catch(() => {})
-
-    // Poll independently — don't chain off the findJobs promise.
-    // seenRunning prevents a false "done" if the first poll fires before
-    // the pipeline has started (running=false before it ever became true).
-    let seenRunning = false
-    const poll = setInterval(async () => {
-      try {
-        const status = await api.getPipelineStatus()
-        if (status.running) {
-          seenRunning = true
-        } else if (seenRunning) {
-          clearInterval(poll)
-          setSearching(false)
-          await api.generateDigest().catch(() => {})
-          queryClient.invalidateQueries({ queryKey: ['digests'] })
-          queryClient.invalidateQueries({ queryKey: ['digest'] })
-          queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
-          Alert.alert('Search complete', 'Your feed has been updated.')
-        }
-      } catch {
-        // network blip — keep polling
-      }
-    }, 15000)
-  }
-
-  async function handleStopAndDigest() {
-    try {
-      await api.cancelPipeline()
-    } catch {
-      // ignore — pipeline will complete naturally
-    }
-  }
 
   return (
     <View className="flex-1 bg-gray-950">
@@ -968,35 +925,6 @@ export default function FeedScreen() {
             </Pressable>
           ))}
         </View>
-
-        {/* Find Jobs / Stop button */}
-        {searching ? (
-          <Pressable
-            className="ml-2 rounded-lg px-3 py-2 active:opacity-75 bg-red-900"
-            onPress={handleStopAndDigest}
-          >
-            <View className="flex-row items-center gap-1.5">
-              <ActivityIndicator size="small" color="#fca5a5" />
-              <Text className="text-red-300 text-xs font-semibold">Searching…</Text>
-            </View>
-          </Pressable>
-        ) : (
-          <Pressable
-            className="ml-2 bg-indigo-600 rounded-lg px-3 py-2 active:opacity-75"
-            onPress={() => {
-              Alert.alert(
-                'Find Jobs',
-                'Searches all job boards and scores results against your profile. Takes 2–5 minutes — you can use the app freely while it runs.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Start Search', onPress: handleFindJobs },
-                ]
-              )
-            }}
-          >
-            <Text className="text-white text-xs font-semibold">Find Jobs</Text>
-          </Pressable>
-        )}
 
         {/* Manual add button */}
         <Pressable
