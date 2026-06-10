@@ -7,7 +7,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { useConfigStore } from '../../stores/config'
@@ -66,8 +66,12 @@ export default function SettingsScreen() {
   const [rescoring, setRescoring] = useState(false)
   const [generatingKeywords, setGeneratingKeywords] = useState(false)
   const [refreshingDigest, setRefreshingDigest] = useState(false)
+  const [bgBanner, setBgBanner] = useState<string | null>(null)
   const versionTapCount = useRef(0)
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const bgRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => { if (bgRefreshTimer.current) clearTimeout(bgRefreshTimer.current) }, [])
 
   const queryClient = useQueryClient()
 
@@ -89,6 +93,18 @@ export default function SettingsScreen() {
     refetchInterval: 5 * 60 * 1000, // refresh every 5 mins
   })
 
+  function showBgBanner(message: string, refreshAfterMs: number) {
+    setBgBanner(message)
+    if (bgRefreshTimer.current) clearTimeout(bgRefreshTimer.current)
+    bgRefreshTimer.current = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['digests'] })
+      queryClient.invalidateQueries({ queryKey: ['digest'] })
+      queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+      setBgBanner(null)
+    }, refreshAfterMs)
+  }
+
   function save() {
     setApiBase(draftBase.trim())
     setAdminToken(draftToken.trim())
@@ -109,29 +125,18 @@ export default function SettingsScreen() {
   async function rescoreAll() {
     Alert.alert(
       'Rescore All Jobs',
-      'This will re-rank all jobs in your database using your current profile and approved facts. It may take a moment.',
+      'Re-ranks all jobs against your current profile and approved facts.\n\nTakes ~30 seconds — runs in the background so you can use the app freely.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Rescore',
-          onPress: async () => {
+          onPress: () => {
             setRescoring(true)
-            try {
-              const result = await api.rescoreJobs({ onlyUnscored: false })
-              // Rebuild digest so the feed reflects the new scores
-              await api.generateDigest()
-              queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
-              queryClient.invalidateQueries({ queryKey: ['digests'] })
-              queryClient.invalidateQueries({ queryKey: ['digest'] })
-              Alert.alert(
-                'Rescore Complete ✓',
-                `Scored ${result.scored} jobs · ${result.hidden_gems} hidden gems found\n\nStrong: ${result.by_bucket?.strong ?? 0} · Maybe: ${result.by_bucket?.maybe ?? 0}\n\nFeed updated.`
-              )
-            } catch (e: unknown) {
-              Alert.alert('Rescore Failed', e instanceof Error ? e.message : 'Unknown error')
-            } finally {
-              setRescoring(false)
-            }
+            api.rescoreJobsAsync({ onlyUnscored: false })
+              .then(() => api.generateDigestAsync())
+              .catch(() => {})
+              .finally(() => setRescoring(false))
+            showBgBanner('Scoring jobs in background… feed refreshes in ~30s', 35_000)
           },
         },
       ]
@@ -146,7 +151,7 @@ export default function SettingsScreen() {
     }
     Alert.alert(
       'Regenerate Keywords',
-      'This will use AI to analyse your approved career facts and generate new keyword lists, then rescore all jobs.',
+      'Uses AI to analyse your approved facts and build new keyword lists, then rescores all jobs.\n\nKeyword generation takes ~5 seconds. Rescoring runs in the background (~30s).',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -155,17 +160,14 @@ export default function SettingsScreen() {
             setGeneratingKeywords(true)
             try {
               const result = await api.generateProfileKeywords(slug)
-              // Rescore and refresh feed with new keywords
-              const rescore = await api.rescoreJobs({ onlyUnscored: false })
-              await api.generateDigest()
-              queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
-              queryClient.invalidateQueries({ queryKey: ['digests'] })
-              queryClient.invalidateQueries({ queryKey: ['digest'] })
+              // Keywords done — fire rescore + digest in background
+              api.rescoreJobsAsync({ onlyUnscored: false })
+                .then(() => api.generateDigestAsync())
+                .catch(() => {})
+              showBgBanner('Keywords saved — scoring jobs in background… feed refreshes in ~30s', 35_000)
               Alert.alert(
                 'Keywords Generated ✓',
-                `Generated from ${result.facts_used} facts:\n\n` +
-                `Strong: ${result.strong_keywords.length} · Weak: ${result.weak_keywords.length} · Negative: ${result.negative_keywords.length}\n\n` +
-                `Rescored ${rescore.scored} jobs · ${rescore.hidden_gems} hidden gems\n\nFeed updated.`
+                `From ${result.facts_used} facts:\n\nStrong: ${result.strong_keywords.length} · Weak: ${result.weak_keywords.length} · Negative: ${result.negative_keywords.length}\n\nRescoring jobs in background.`
               )
             } catch (e: unknown) {
               Alert.alert('Keyword Generation Failed', e instanceof Error ? e.message : 'Unknown error')
@@ -192,21 +194,40 @@ export default function SettingsScreen() {
   }
 
   async function refreshDigest() {
-    setRefreshingDigest(true)
-    try {
-      await api.generateDigest({ digest_type: 'daily' })
-      queryClient.invalidateQueries({ queryKey: ['digests'] })
-      queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
-      Alert.alert('Digest Refreshed ✓', 'Your feed has been updated.')
-    } catch (e: unknown) {
-      Alert.alert('Refresh Failed', e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setRefreshingDigest(false)
-    }
+    Alert.alert(
+      'Refresh Feed',
+      'Rebuilds your digest from the current job scores.\n\nTakes ~5 seconds — runs in the background.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Refresh',
+          onPress: () => {
+            setRefreshingDigest(true)
+            api.generateDigestAsync({ digest_type: 'daily' })
+              .catch(() => {})
+              .finally(() => setRefreshingDigest(false))
+            showBgBanner('Rebuilding feed in background… refreshes in ~10s', 12_000)
+          },
+        },
+      ]
+    )
   }
 
   return (
     <ScrollView className="flex-1 bg-gray-950" contentContainerStyle={{ padding: 20 }}>
+
+      {/* ── Background task banner ──────────────────────────── */}
+      {bgBanner && (
+        <View className="flex-row items-center justify-between bg-indigo-900 border border-indigo-700 rounded-xl px-4 py-3 mb-4">
+          <View className="flex-row items-center gap-2 flex-1">
+            <ActivityIndicator size="small" color="#a5b4fc" />
+            <Text className="text-indigo-200 text-sm flex-1">{bgBanner}</Text>
+          </View>
+          <Pressable onPress={() => setBgBanner(null)} className="ml-2 active:opacity-50">
+            <Text className="text-indigo-400 text-xs">✕</Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* ── Connection ─────────────────────────────────────── */}
       <SectionHeader title="Connection" />

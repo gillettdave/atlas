@@ -386,4 +386,21 @@ export const api = {
         body: JSON.stringify({ only_active: true, only_unscored: opts.onlyUnscored ?? false }),
       }
     ),
+
+  // Fire-and-forget variants — server returns 202 immediately, work runs in background.
+  // Use these from the mobile client to avoid "network request failed" when app is backgrounded.
+  rescoreJobsAsync: (opts: { onlyUnscored?: boolean } = {}) =>
+    request<{ status: string }>(
+      '/imports/rescore-async',
+      {
+        method: 'POST',
+        body: JSON.stringify({ only_active: true, only_unscored: opts.onlyUnscored ?? false }),
+      }
+    ),
+
+  generateDigestAsync: (params?: DigestGenerateRequest) =>
+    request<{ status: string }>('/digests/generate-async', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    }),
 }

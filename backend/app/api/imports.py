@@ -1,7 +1,11 @@
 """Importer / ranker endpoints — drive cleaner_v2 and ranker."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+_log = logging.getLogger("atlas.api.imports")
 
 from urllib.parse import urlparse
 
@@ -27,6 +31,7 @@ from ..services import importer, profiles as profiles_svc, ranker
 from ..services.collector_pipeline import resolve_input_csv_path
 from ..services import ingestion_sources_collect as ingestion_src_collect
 from ..services import ingestion_sources_list as ingestion_src_list
+from ..db import SessionLocal
 from .deps import DbSession, TenantUserId, require_admin_token
 
 router = APIRouter()
@@ -97,6 +102,41 @@ def rescore(payload: RescoreRequest, db: DbSession) -> RescoreResult:
         by_bucket=stats.by_bucket,
         profile_slug=profile.slug if profile else None,
     )
+
+
+def _bg_rescore(payload_dict: dict) -> None:
+    db = SessionLocal()
+    try:
+        profile = None
+        if payload_dict.get("profile_slug"):
+            profile = profiles_svc.get_by_slug(db, payload_dict["profile_slug"])
+        ranker.rescore_jobs(
+            db,
+            provider=payload_dict.get("provider"),
+            only_active=payload_dict.get("only_active", True),
+            only_unscored=payload_dict.get("only_unscored", False),
+            limit=payload_dict.get("limit"),
+            profile=profile,
+        )
+        _log.info("bg_rescore complete")
+    except Exception as exc:
+        _log.error("bg_rescore failed: %s", exc)
+    finally:
+        db.close()
+
+
+@router.post(
+    "/rescore-async",
+    status_code=202,
+    dependencies=[Depends(require_admin_token)],
+    summary="Queue a rescore in the background — returns 202 immediately.",
+)
+def rescore_async(
+    payload: RescoreRequest,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    background_tasks.add_task(_bg_rescore, payload.model_dump())
+    return {"status": "queued"}
 
 
 @router.post(

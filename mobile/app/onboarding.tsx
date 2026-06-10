@@ -214,8 +214,10 @@ export default function OnboardingScreen() {
       setOnboardingDismissed(true)
       router.replace('/(tabs)')
 
-      // Score existing job pool against new profile — fast (seconds, not minutes)
-      api.rescoreJobs({ onlyUnscored: false }).catch(() => {})
+      // Score existing job pool against new profile — server-side background task
+      api.rescoreJobsAsync({ onlyUnscored: false })
+        .then(() => api.generateDigestAsync())
+        .catch(() => {})
     } catch (err: any) {
       setLoading(false)
       Alert.alert(

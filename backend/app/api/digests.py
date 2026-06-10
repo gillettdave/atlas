@@ -11,8 +11,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import Response
+
+_log = logging.getLogger("atlas.api.digests")
 from sqlalchemy import select
 
 from ..models.job import Job
@@ -31,6 +35,7 @@ from ..schemas.digest import (
 from ..schemas.job import JobOut
 from ..services import digest_builder, digest_delivery, feed_alerts
 from ..services.digest_builder import DigestConfig
+from ..db import SessionLocal
 from .deps import DbSession, require_admin_token
 
 router = APIRouter()
@@ -161,6 +166,46 @@ def generate(payload: DigestGenerateRequest, db: DbSession) -> DigestDetail:
     feed_alerts.maybe_digest_top_jobs_alert(db, built, source="digest_generate_admin")
     db.commit()
     return _built_to_detail(built)
+
+
+def _bg_generate_digest(payload_dict: dict) -> None:
+    db = SessionLocal()
+    try:
+        cfg = DigestConfig(
+            digest_type=payload_dict.get("digest_type", "daily"),
+            fresh_hours=payload_dict.get("fresh_hours", 48),
+            fresh_limit=payload_dict.get("fresh_limit", 15),
+            gem_limit=payload_dict.get("gem_limit", 10),
+            per_company_cap=payload_dict.get("per_company_cap", 2),
+            profile_slug=payload_dict.get("profile_slug"),
+            apply_qualification=payload_dict.get("apply_qualification", True),
+            use_llm_qualification=payload_dict.get("use_llm_qualification", False),
+            min_ranking_score=Decimal(str(payload_dict.get("min_ranking_score", 0))),
+            gem_min_score=Decimal(str(payload_dict.get("gem_min_score", 0))),
+            notes=payload_dict.get("notes"),
+        )
+        built = digest_builder.build_digest(db, cfg)
+        feed_alerts.maybe_digest_top_jobs_alert(db, built, source="digest_generate_async")
+        db.commit()
+        _log.info("bg_generate_digest complete")
+    except Exception as exc:
+        _log.error("bg_generate_digest failed: %s", exc)
+    finally:
+        db.close()
+
+
+@router.post(
+    "/generate-async",
+    status_code=202,
+    dependencies=[Depends(require_admin_token)],
+    summary="Queue a digest build in the background — returns 202 immediately.",
+)
+def generate_async(
+    payload: DigestGenerateRequest,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    background_tasks.add_task(_bg_generate_digest, payload.model_dump())
+    return {"status": "queued"}
 
 
 # ---------------------------------------------------------------------------
