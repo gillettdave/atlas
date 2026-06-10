@@ -910,36 +910,37 @@ export default function FeedScreen() {
     return () => sub.remove()
   }, [queryClient])
 
-  async function handleFindJobs() {
+  function handleFindJobs() {
     if (searching) return
     setSearching(true)
-    // Fire-and-forget — don't await, so the user can tab away freely.
-    // The server runs the full pipeline; pull-to-refresh when done.
-    // POST returns immediately (202) — pipeline runs on server in background thread
-    api.findJobs()
-      .then(() => {
-        // Poll /pipeline/status every 15s until the server reports not running
-        const poll = setInterval(async () => {
-          try {
-            const status = await api.getPipelineStatus()
-            if (!status.running) {
-              clearInterval(poll)
-              setSearching(false)
-              await api.generateDigest().catch(() => {})
-              queryClient.invalidateQueries({ queryKey: ['digests'] })
-              queryClient.invalidateQueries({ queryKey: ['digest'] })
-              queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
-              Alert.alert('Search complete', 'Your feed has been updated.')
-            }
-          } catch {
-            // network blip during poll — keep trying
-          }
-        }, 15000)
-      })
-      .catch((e: Error) => {
-        setSearching(false)
-        Alert.alert('Find Jobs failed', e.message)
-      })
+
+    // True fire-and-forget — swallow the response/error entirely.
+    // Even if iOS kills the TCP connection while backgrounded, the server
+    // already received the POST and started the pipeline.
+    api.findJobs().catch(() => {})
+
+    // Poll independently — don't chain off the findJobs promise.
+    // seenRunning prevents a false "done" if the first poll fires before
+    // the pipeline has started (running=false before it ever became true).
+    let seenRunning = false
+    const poll = setInterval(async () => {
+      try {
+        const status = await api.getPipelineStatus()
+        if (status.running) {
+          seenRunning = true
+        } else if (seenRunning) {
+          clearInterval(poll)
+          setSearching(false)
+          await api.generateDigest().catch(() => {})
+          queryClient.invalidateQueries({ queryKey: ['digests'] })
+          queryClient.invalidateQueries({ queryKey: ['digest'] })
+          queryClient.invalidateQueries({ queryKey: ['all-jobs'] })
+          Alert.alert('Search complete', 'Your feed has been updated.')
+        }
+      } catch {
+        // network blip — keep polling
+      }
+    }, 15000)
   }
 
   async function handleStopAndDigest() {

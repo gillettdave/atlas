@@ -57,13 +57,14 @@ function formatTimeUntil(isoString: string | null): string {
 
 export default function SettingsScreen() {
   const router = useRouter()
-  const { apiBase, adminToken, activeProfileId, devMode, setApiBase, setAdminToken, setActiveProfile, setDevMode } =
+  const { apiBase, adminToken, activeProfileId, activeProfileSlug, devMode, setApiBase, setAdminToken, setActiveProfile, setDevMode } =
     useConfigStore()
 
   const [draftBase, setDraftBase] = useState(apiBase)
   const [draftToken, setDraftToken] = useState(adminToken)
   const [testing, setTesting] = useState(false)
   const [rescoring, setRescoring] = useState(false)
+  const [generatingKeywords, setGeneratingKeywords] = useState(false)
   const [refreshingDigest, setRefreshingDigest] = useState(false)
   const versionTapCount = useRef(0)
   const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -130,6 +131,46 @@ export default function SettingsScreen() {
               Alert.alert('Rescore Failed', e instanceof Error ? e.message : 'Unknown error')
             } finally {
               setRescoring(false)
+            }
+          },
+        },
+      ]
+    )
+  }
+
+  async function generateKeywords() {
+    const slug = activeProfileSlug
+    if (!slug) {
+      Alert.alert('No active profile', 'Select a profile first.')
+      return
+    }
+    Alert.alert(
+      'Regenerate Keywords',
+      'This will use AI to analyse your approved career facts and generate new keyword lists, then rescore all jobs.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Generate',
+          onPress: async () => {
+            setGeneratingKeywords(true)
+            try {
+              const result = await api.generateProfileKeywords(slug)
+              // Rescore and refresh feed with new keywords
+              const rescore = await api.rescoreJobs({ onlyUnscored: false })
+              await api.generateDigest()
+              queryClient.invalidateQueries({ queryKey: ['pipeline-stats'] })
+              queryClient.invalidateQueries({ queryKey: ['digests'] })
+              queryClient.invalidateQueries({ queryKey: ['digest'] })
+              Alert.alert(
+                'Keywords Generated ✓',
+                `Generated from ${result.facts_used} facts:\n\n` +
+                `Strong: ${result.strong_keywords.length} · Weak: ${result.weak_keywords.length} · Negative: ${result.negative_keywords.length}\n\n` +
+                `Rescored ${rescore.scored} jobs · ${rescore.hidden_gems} hidden gems\n\nFeed updated.`
+              )
+            } catch (e: unknown) {
+              Alert.alert('Keyword Generation Failed', e instanceof Error ? e.message : 'Unknown error')
+            } finally {
+              setGeneratingKeywords(false)
             }
           },
         },
@@ -293,6 +334,23 @@ export default function SettingsScreen() {
             </Text>
           </View>
           {refreshingDigest ? (
+            <ActivityIndicator size="small" color="#818cf8" />
+          ) : (
+            <Text className="text-indigo-400 text-sm font-semibold">Run</Text>
+          )}
+        </Pressable>
+        <Pressable
+          className="flex-row items-center justify-between px-4 py-3.5 border-b border-gray-800 active:opacity-75"
+          onPress={generateKeywords}
+          disabled={generatingKeywords}
+        >
+          <View className="flex-1 mr-3">
+            <Text className="text-gray-200 font-medium">Regenerate Keywords</Text>
+            <Text className="text-gray-500 text-xs mt-0.5">
+              Use AI to extract scoring keywords from your approved career facts
+            </Text>
+          </View>
+          {generatingKeywords ? (
             <ActivityIndicator size="small" color="#818cf8" />
           ) : (
             <Text className="text-indigo-400 text-sm font-semibold">Run</Text>

@@ -360,6 +360,14 @@ export const api = {
       status: string
     }>('/collection/status'),
 
+  // ── Profile Keywords ─────────────────────────────────────────────────────────
+
+  generateProfileKeywords: (slug: string) =>
+    request<{ ok: boolean; profile_slug: string; facts_used: number; strong_keywords: string[]; weak_keywords: string[]; negative_keywords: string[] }>(
+      `/profiles/${slug}/generate-keywords`,
+      { method: 'POST' }
+    ),
+
   // ── Rescore ──────────────────────────────────────────────────────────────────
 
   rescoreJobs: (opts: { onlyUnscored?: boolean } = {}) =>

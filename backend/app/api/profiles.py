@@ -28,6 +28,7 @@ from ..schemas.user_profile import (
     UserProfileUpdate,
 )
 from ..services import keyword_promotion as keyword_promotion_svc
+from ..services import keyword_generation as keyword_generation_svc
 from ..services import learning as learning_svc
 from ..services import profiles as profiles_svc
 from ..services import ranker
@@ -274,6 +275,19 @@ def test_score(
         hidden_gem=result.hidden_gem,
         details=result.details,
     )
+
+
+@router.post(
+    "/{slug}/generate-keywords",
+    dependencies=[Depends(require_admin_token)],
+    summary="Use LLM to generate keyword lists for a profile from approved career facts.",
+)
+def generate_keywords(slug: str, db: DbSession) -> dict:
+    profile = profiles_svc.get_by_slug(db, slug)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"profile not found: {slug!r}")
+    result = keyword_generation_svc.generate_keywords_from_facts(db, profile)
+    return result
 
 
 @router.post(
