@@ -12,12 +12,13 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as DocumentPicker from 'expo-document-picker'
 import { api } from '../../services/api'
+import { useConfigStore } from '../../stores/config'
 import { EmptyState } from '../../components/EmptyState'
 import type { CareerFact, ProfileQuestion, TimelineEntry, CandidateProfileUpdate, SearchMode } from '../../types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'info' | 'documents' | 'questions' | 'facts'
+type Tab = 'overview' | 'info' | 'documents' | 'questions' | 'facts' | 'keywords'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'documents', label: 'Docs'      },
   { key: 'questions', label: 'Questions' },
   { key: 'facts',     label: 'Facts'     },
+  { key: 'keywords',  label: 'Keywords'  },
 ]
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -1046,6 +1048,163 @@ function FactsTab() {
   )
 }
 
+// ── Keywords Tab ──────────────────────────────────────────────────────────────
+
+type KeywordList = 'strong_keywords' | 'weak_keywords' | 'negative_keywords'
+
+const KEYWORD_SECTIONS: { key: KeywordList; label: string; color: string; chipBg: string; chipText: string }[] = [
+  { key: 'strong_keywords',   label: 'Strong',   color: 'text-emerald-400', chipBg: 'bg-emerald-950 border-emerald-800', chipText: 'text-emerald-300' },
+  { key: 'weak_keywords',     label: 'Weak',     color: 'text-yellow-400',  chipBg: 'bg-yellow-950 border-yellow-800',   chipText: 'text-yellow-300'  },
+  { key: 'negative_keywords', label: 'Negative', color: 'text-red-400',     chipBg: 'bg-red-950 border-red-900',         chipText: 'text-red-300'     },
+]
+
+function KeywordsTab() {
+  const queryClient = useQueryClient()
+  const { activeProfileSlug } = useConfigStore()
+  const slug = activeProfileSlug ?? 'david'
+
+  const [addingFor, setAddingFor] = useState<KeywordList | null>(null)
+  const [draftAdd, setDraftAdd] = useState('')
+  const [regenerating, setRegenerating] = useState(false)
+
+  const { data: profile, isPending, refetch } = useQuery({
+    queryKey: ['profile-detail', slug],
+    queryFn: () => api.getProfile(slug),
+  })
+
+  async function saveKeywords(update: Partial<Record<KeywordList, string[]>>) {
+    await api.updateProfile(slug, update)
+    queryClient.invalidateQueries({ queryKey: ['profile-detail', slug] })
+    refetch()
+  }
+
+  function removeKeyword(list: KeywordList, word: string) {
+    if (!profile) return
+    const current: string[] = profile[list] ?? []
+    saveKeywords({ [list]: current.filter(k => k !== word) }).catch(() =>
+      Alert.alert('Error', 'Failed to remove keyword')
+    )
+  }
+
+  function addKeyword(list: KeywordList) {
+    const word = draftAdd.trim().toLowerCase()
+    if (!word || !profile) return
+    const current: string[] = profile[list] ?? []
+    if (current.includes(word)) {
+      Alert.alert('Already exists', `"${word}" is already in this list.`)
+      return
+    }
+    saveKeywords({ [list]: [...current, word] })
+      .then(() => { setDraftAdd(''); setAddingFor(null) })
+      .catch(() => Alert.alert('Error', 'Failed to add keyword'))
+  }
+
+  async function regenerate() {
+    setRegenerating(true)
+    try {
+      const result = await api.generateProfileKeywords(slug)
+      queryClient.invalidateQueries({ queryKey: ['profile-detail', slug] })
+      refetch()
+      Alert.alert(
+        'Keywords Regenerated ✓',
+        `From ${result.facts_used} approved facts:\n\nStrong: ${result.strong_keywords.length} · Weak: ${result.weak_keywords.length} · Negative: ${result.negative_keywords.length}`
+      )
+    } catch (e: unknown) {
+      Alert.alert('Failed', e instanceof Error ? e.message : 'Unknown error')
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
+  if (isPending) {
+    return (
+      <View className="flex-1 items-center justify-center py-20">
+        <ActivityIndicator color="#818cf8" />
+      </View>
+    )
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      {/* Regenerate button */}
+      <Pressable
+        className="flex-row items-center justify-center gap-2 bg-indigo-600 rounded-xl py-3 mb-6 active:opacity-75"
+        onPress={regenerate}
+        disabled={regenerating}
+      >
+        {regenerating
+          ? <ActivityIndicator size="small" color="white" />
+          : <Text className="text-white font-semibold">✨ Regenerate with AI</Text>
+        }
+      </Pressable>
+
+      {KEYWORD_SECTIONS.map(({ key, label, color, chipBg, chipText }) => {
+        const words: string[] = profile?.[key] ?? []
+        const isAdding = addingFor === key
+
+        return (
+          <View key={key} className="mb-6">
+            <View className="flex-row items-center justify-between mb-2">
+              <Text className={`text-xs uppercase font-semibold tracking-widest ${color}`}>
+                {label} ({words.length})
+              </Text>
+              <Pressable
+                className="px-2 py-1 active:opacity-50"
+                onPress={() => { setAddingFor(isAdding ? null : key); setDraftAdd('') }}
+              >
+                <Text className="text-indigo-400 text-sm font-semibold">{isAdding ? 'Cancel' : '+ Add'}</Text>
+              </Pressable>
+            </View>
+
+            {/* Add input */}
+            {isAdding && (
+              <View className="flex-row gap-2 mb-2">
+                <TextInput
+                  className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-sm"
+                  placeholder="e.g. community manager"
+                  placeholderTextColor="#4b5563"
+                  value={draftAdd}
+                  onChangeText={setDraftAdd}
+                  autoFocus
+                  autoCapitalize="none"
+                  onSubmitEditing={() => addKeyword(key)}
+                  returnKeyType="done"
+                />
+                <Pressable
+                  className="bg-indigo-600 rounded-lg px-4 items-center justify-center active:opacity-75"
+                  onPress={() => addKeyword(key)}
+                  disabled={!draftAdd.trim()}
+                >
+                  <Text className="text-white font-semibold text-sm">Add</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* Keyword chips */}
+            <View className="flex-row flex-wrap gap-2">
+              {words.length === 0 && (
+                <Text className="text-gray-700 text-sm italic">No keywords yet</Text>
+              )}
+              {words.map((word) => (
+                <View key={word} className={`flex-row items-center rounded-full border px-3 py-1 gap-1.5 ${chipBg}`}>
+                  <Text className={`text-xs ${chipText}`}>{word}</Text>
+                  <Pressable
+                    onPress={() => removeKeyword(key, word)}
+                    hitSlop={8}
+                    className="active:opacity-50"
+                  >
+                    <Text className={`text-xs ${chipText} opacity-60`}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          </View>
+        )
+      })}
+    </ScrollView>
+  )
+}
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
@@ -1082,6 +1241,7 @@ export default function ProfileScreen() {
       {activeTab === 'documents' && <DocumentsTab />}
       {activeTab === 'questions' && <QuestionsTab />}
       {activeTab === 'facts'     && <FactsTab />}
+      {activeTab === 'keywords'  && <KeywordsTab />}
     </View>
   )
 }

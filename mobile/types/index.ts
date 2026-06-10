@@ -287,11 +287,12 @@ export interface Profile {
   id: number
   slug: string
   display_name: string
+  description: string | null
   weights: Record<string, number>
   remote_bias: string | null
-  keywords_strong: string[]
-  keywords_weak: string[]
-  keywords_negative: string[]
+  strong_keywords: string[]
+  weak_keywords: string[]
+  negative_keywords: string[]
 }
 
 export interface DashboardLane {

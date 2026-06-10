@@ -262,6 +262,14 @@ export const api = {
 
   getProfiles: () => request<{ total: number; items: Profile[] }>('/profiles').then(r => r.items),
 
+  getProfile: (slug: string) => request<Profile>(`/profiles/${slug}`),
+
+  updateProfile: (slug: string, patch: { strong_keywords?: string[]; weak_keywords?: string[]; negative_keywords?: string[] }) =>
+    request<Profile>(`/profiles/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
   getTemplates: () =>
     request<{ templates: { slug: string; display_name: string; description: string }[] }>(
       '/profiles/templates'

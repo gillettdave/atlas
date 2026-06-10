@@ -37,12 +37,33 @@ from ..services.career_memory import (
     prepare_upload_bytes_as_text,
     reextract_facts_for_document,
 )
+from ..services import keyword_generation as keyword_generation_svc
+from ..services import profiles as profiles_svc
 
 from ..config import Settings
 
 from .deps import DbSession, SettingsDep, TenantUserId
+import threading
 
 router = APIRouter(prefix="/career-memory", tags=["career-memory"])
+
+import logging as _logging
+_logger = _logging.getLogger(__name__)
+
+
+def _regen_keywords_background(settings: Settings) -> None:
+    """Fire-and-forget: regenerate keywords for the default profile after fact ingestion."""
+    def _run() -> None:
+        try:
+            from ..db import session_scope
+            with session_scope() as db:
+                profile = profiles_svc.get_default(db)
+                if profile is None:
+                    return
+                keyword_generation_svc.generate_keywords_from_facts(db, profile)
+        except Exception:
+            _logger.debug("Background keyword regeneration skipped or failed", exc_info=True)
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _resolve_use_llm_facts(flag: bool | None, settings: Settings) -> bool:
@@ -142,6 +163,8 @@ async def upload_source_document(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if use_llm:
+        _regen_keywords_background(settings)
     return document_to_list_item(doc, preview_chars=500)
 
 
@@ -249,6 +272,7 @@ def re_extract_document_facts(
         count = reextract_facts_for_document(db, document_id, tenant_id, settings=settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _regen_keywords_background(settings)
     return {"ok": True, "new_facts": count}
 
 
