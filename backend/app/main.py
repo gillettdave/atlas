@@ -149,9 +149,26 @@ async def _daily_collection_loop(stop_event: asyncio.Event) -> None:
             "daily collection done: ok=%s records=%s new_jobs=%s duration=%.0fs",
             result.ok, result.records_inserted, result.new_canonical, result.duration_sec,
         )
-        # Cull stale listings after each collection run
+        # Rebuild digest so users see fresh jobs when they open the app
+        from .services import digest_builder as _db_svc
+        from .services.digest_builder import DigestConfig as _DigestConfig
+        from .constants import SEEDED_LOCAL_USER_ID as _SEED_UID
+        with SessionLocal() as _db:
+            try:
+                _built = _db_svc.build_digest(_db, _DigestConfig())
+                _db.commit()
+                logger.info(
+                    "daily digest rebuilt: fresh=%d gems=%d",
+                    _built.stats.fresh_selected,
+                    _built.stats.gem_selected,
+                )
+            except Exception:
+                logger.exception("daily digest rebuild failed")
+
+        # Cull stale listings and old digests after each collection run
         with SessionLocal() as _db:
             _expiry.expire_stale_jobs(_db)
+            _expiry.expire_old_digests(_db)
 
     # Wait until the first scheduled time before entering the loop
     wait = _seconds_until_next_run()

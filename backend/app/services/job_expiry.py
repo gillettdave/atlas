@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, exists, select, update
 from sqlalchemy.orm import Session
 
+from ..models.digest import Digest
 from ..models.job import Job
 from ..models.application_job_track import ApplicationJobTrack
 
@@ -123,3 +124,14 @@ def expire_stale_jobs(
         stats.protected_from_delete,
     )
     return stats
+
+
+def expire_old_digests(db: Session, *, keep_days: int = 14) -> int:
+    """Delete digest rows (+ their items via cascade) older than keep_days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
+    result = db.execute(delete(Digest).where(Digest.generated_at < cutoff))
+    db.commit()
+    count = result.rowcount
+    if count:
+        logger.info("digest_expiry: deleted %d digests older than %dd", count, keep_days)
+    return count

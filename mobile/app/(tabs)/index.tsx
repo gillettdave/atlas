@@ -401,9 +401,15 @@ function locationMatchesMode(job: Job, mode: FeedLocationMode, homeCity: string)
 
 // ── Digest Mode ───────────────────────────────────────────────────────────────
 
+function formatDigestDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
 function DigestView({ locationMode, homeCity }: { locationMode: FeedLocationMode; homeCity: string }) {
   const queryClient = useQueryClient()
   const [showOptions, setShowOptions] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [selectedDigestId, setSelectedDigestId] = useState<string | null>(null)
 
   const { data: profiles = [] } = useQuery({
     queryKey: ['profiles'],
@@ -418,15 +424,17 @@ function DigestView({ locationMode, homeCity }: { locationMode: FeedLocationMode
     refetch: refetchDigests,
   } = useQuery({
     queryKey: ['digests'],
-    queryFn: () => api.getDigests(),
+    queryFn: () => api.getDigests({ limit: 14 }),
   })
 
   const latestDigest = digests?.[0]
+  const activeDigestId = selectedDigestId ?? latestDigest?.id
+  const activeDigestMeta = digests?.find(d => d.id === activeDigestId) ?? latestDigest
 
   const { data: digest, isPending: loadingItems, isError: detailError, error: detailErrObj } = useQuery({
-    queryKey: ['digest', latestDigest?.id],
-    queryFn: () => api.getDigest(latestDigest!.id),
-    enabled: !!latestDigest,
+    queryKey: ['digest', activeDigestId],
+    queryFn: () => api.getDigest(activeDigestId!),
+    enabled: !!activeDigestId,
   })
 
   const generateMutation = useMutation({
@@ -470,46 +478,89 @@ function DigestView({ locationMode, homeCity }: { locationMode: FeedLocationMode
     null
 
   const ListHeader = (
-    <View className="flex-row items-center justify-between mb-4">
-      <View>
-        <View className="flex-row items-center gap-2">
-          <Text className="text-gray-400 text-xs">Latest digest</Text>
-          {locationLabel && (
-            <Text className="text-indigo-400 text-xs">{locationLabel}</Text>
-          )}
+    <View className="mb-4">
+      <View className="flex-row items-center justify-between">
+        <View className="flex-1 mr-3">
+          {/* Tappable date — opens history picker */}
+          <Pressable
+            className="flex-row items-center gap-1.5 active:opacity-60"
+            onPress={() => digests && digests.length > 1 && setShowHistory(true)}
+          >
+            <Text className="text-gray-200 font-semibold text-sm">
+              {activeDigestMeta ? formatDigestDate(activeDigestMeta.generated_at) : 'No digest yet'}
+            </Text>
+            {digests && digests.length > 1 && (
+              <Text className="text-gray-500 text-xs">▼</Text>
+            )}
+          </Pressable>
+          <View className="flex-row items-center gap-2 mt-0.5">
+            {totalItems > 0 && (
+              <Text className="text-gray-600 text-xs">{totalItems} jobs</Text>
+            )}
+            {locationLabel && (
+              <Text className="text-indigo-400 text-xs">{locationLabel}</Text>
+            )}
+            {selectedDigestId && selectedDigestId !== latestDigest?.id && (
+              <Pressable onPress={() => setSelectedDigestId(null)} className="active:opacity-60">
+                <Text className="text-indigo-500 text-xs">← Latest</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
-        {digest && (
-          <Text className="text-gray-600 text-xs mt-0.5">
-            {totalItems} jobs · {new Date(digest.generated_at).toLocaleDateString()}
-            {digest.digest_type !== 'daily' ? ` · ${digest.digest_type}` : ''}
-          </Text>
-        )}
-        {digest?.stats && (digest.stats.excluded_by_qualification > 0 || digest.stats.dropped_by_cap > 0) && (
-          <Text className="text-gray-700 text-xs mt-0.5">
-            {[
-              digest.stats.excluded_by_qualification > 0
-                ? `${digest.stats.excluded_by_qualification} filtered`
-                : null,
-              digest.stats.dropped_by_cap > 0
-                ? `${digest.stats.dropped_by_cap} capped`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </Text>
-        )}
+        <Pressable
+          className="bg-indigo-600 rounded-lg px-3 py-2 active:opacity-75"
+          onPress={() => setShowOptions(true)}
+          disabled={generateMutation.isPending}
+        >
+          {generateMutation.isPending ? (
+            <ActivityIndicator size="small" color="white" />
+          ) : (
+            <Text className="text-white text-sm font-semibold">⚙ New Digest</Text>
+          )}
+        </Pressable>
       </View>
-      <Pressable
-        className="bg-indigo-600 rounded-lg px-3 py-2 active:opacity-75"
-        onPress={() => setShowOptions(true)}
-        disabled={generateMutation.isPending}
+
+      {/* Digest history modal */}
+      <Modal
+        visible={showHistory}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowHistory(false)}
       >
-        {generateMutation.isPending ? (
-          <ActivityIndicator size="small" color="white" />
-        ) : (
-          <Text className="text-white text-sm font-semibold">⚙ New Digest</Text>
-        )}
-      </Pressable>
+        <Pressable
+          className="flex-1 bg-black/60 justify-end"
+          onPress={() => setShowHistory(false)}
+        >
+          <Pressable onPress={() => {}} className="bg-gray-900 rounded-t-2xl pb-8">
+            <View className="flex-row items-center justify-between px-5 pt-5 pb-3 border-b border-gray-800">
+              <Text className="text-gray-200 font-semibold text-base">Digest History</Text>
+              <Pressable onPress={() => setShowHistory(false)} className="active:opacity-60">
+                <Text className="text-gray-500 text-sm">✕</Text>
+              </Pressable>
+            </View>
+            {digests?.map((d) => {
+              const isActive = d.id === (activeDigestId)
+              const isLatest = d.id === latestDigest?.id
+              return (
+                <Pressable
+                  key={d.id}
+                  className={`flex-row items-center justify-between px-5 py-4 border-b border-gray-800 active:opacity-70 ${isActive ? 'bg-indigo-950' : ''}`}
+                  onPress={() => { setSelectedDigestId(d.id); setShowHistory(false) }}
+                >
+                  <View className="flex-row items-center gap-2">
+                    {isActive && <Text className="text-indigo-400 text-xs">●</Text>}
+                    <Text className={`text-sm ${isActive ? 'text-indigo-200 font-semibold' : 'text-gray-300'}`}>
+                      {formatDigestDate(d.generated_at)}
+                    </Text>
+                    {isLatest && <Text className="text-emerald-500 text-xs font-medium">Latest</Text>}
+                  </View>
+                  <Text className="text-gray-500 text-xs">{d.item_count} jobs</Text>
+                </Pressable>
+              )
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   )
 
