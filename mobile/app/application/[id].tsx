@@ -89,6 +89,11 @@ export default function ApplicationScreen() {
 
   const latest = packages?.[0]
 
+  const { data: job } = useQuery({
+    queryKey: ['job', jobId],
+    queryFn: () => api.getJob(jobId),
+  })
+
   // Sync drafts when package loads or changes
   useEffect(() => {
     if (latest) {
@@ -146,17 +151,15 @@ export default function ApplicationScreen() {
       Alert.alert('Mail not available', 'No mail app is configured on this device.')
       return
     }
-    const jobTitle = (latest as any).job_title ?? 'Job'
-    const company  = (latest as any).company_name ?? ''
+    const jobTitle = job?.title ?? 'Job'
+    const company  = job?.company_name ?? ''
+    const applyUrl = job?.canonical_apply_url ?? job?.apply_url ?? ''
+    const parts: string[] = []
+    if (applyUrl) { parts.push(`Job posting: ${applyUrl}`, '') }
+    parts.push('=== RÉSUMÉ ===', latest.resume_markdown ?? '', '', '=== COVER LETTER ===', latest.cover_letter_markdown ?? '')
     await MailComposer.composeAsync({
       subject: `Application: ${jobTitle}${company ? ` at ${company}` : ''}`,
-      body: [
-        '=== RÉSUMÉ ===',
-        latest.resume_markdown ?? '',
-        '',
-        '=== COVER LETTER ===',
-        latest.cover_letter_markdown ?? '',
-      ].join('\n'),
+      body: parts.join('\n'),
     })
   }
 
