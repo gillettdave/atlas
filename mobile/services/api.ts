@@ -163,6 +163,23 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
+  savePackage: (jobId: string, data: { resume_markdown: string; cover_letter_markdown: string; strategy_notes: string }) =>
+    request<ApplicationPackage>(`/applications/jobs/${jobId}/packages/save-version`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Returns the raw fetch Response so the caller can read binary data
+  downloadPackageDocx: (jobId: string, packageId: string, part: 'resume' | 'cover-letter' | 'zip') => {
+    const { apiBase, adminToken } = useConfigStore.getState()
+    const path = part === 'zip'
+      ? `/applications/jobs/${jobId}/packages/${packageId}/export/docx-zip`
+      : `/applications/jobs/${jobId}/packages/${packageId}/export/docx/${part}`
+    return fetch(`${apiBase}${path}`, {
+      headers: adminToken ? { 'X-Admin-Token': adminToken } : {},
+    })
+  },
+
   // ── Career Memory — Documents ───────────────────────────────────────────────
 
   getDocuments: () => request<CareerDocument[]>('/career-memory/documents'),
